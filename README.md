@@ -183,6 +183,56 @@ Recent pauses for this repo: when, branch, first line of the summary.
 
 ---
 
+## It separates your attention from your agent's output
+
+An agent that rewrites 60 files in eight seconds leaves 60 fresh mtimes. By mtime alone that is indistinguishable from eight seconds of very focused human attention — and it buries the four files you were actually reasoning about.
+
+`wherewasi` tags clusters of files written together in time and weights them down.
+
+Here is a real capture from a repo where three files were edited by hand over twenty minutes and then an agent generated thirty more in under a second, read back from the stored session:
+
+```console
+window: {"from":"2026-08-17T02:59:41.464Z","source":"fallback","bulkCount":30}
+files: 33  |  git-changed: 3  |  bulk-tagged: 30
+
+  packages/collector/src/otel.ts              [git]
+  packages/guard/src/index.ts                 [git]
+  packages/collector/src/index.ts             [git]
+  packages/examples/src/generated/gen30.ts    [mtime] [bulk]
+  packages/examples/src/generated/gen29.ts    [mtime] [bulk]
+  …
+  packages/examples/src/generated/gen2.ts     [mtime] [bulk]
+  packages/examples/src/generated/gen1.ts     [mtime] [bulk]
+```
+
+The thirty machine-written files landed on top of the working set and did not displace it. What reaches the model is this — five bulk files as a sample, the rest as a count, and a note on how to read the tags:
+
+```
+<recently_touched_files>
+packages/collector/src/otel.ts   2026-08-17T04:48:41.000Z  [git-changed]
+packages/guard/src/index.ts      2026-08-17T04:41:41.000Z  [git-changed]
+packages/collector/src/index.ts  2026-08-17T04:37:41.000Z  [git-changed]
+packages/examples/src/generated/gen30.ts  2026-08-17T04:59:41.395Z  [mtime-only] [bulk-edit]
+…
+… and 25 more files from the same bulk edit
+</recently_touched_files>
+
+<reading_the_file_list>
+Files tagged bulk-edit were written together in seconds — a codemod, a formatter,
+or an agent — so they show attention far less reliably than files touched
+individually. Weight them below the rest. Files tagged git-changed are the
+strongest signal; mtime-only files may just have been read or rebuilt.
+</reading_the_file_list>
+```
+
+Sending all thirty would pay the most tokens for the least signal, which is the opposite of what tagging them was for. Storage still keeps all of them for `resume --open`.
+
+A cluster is 15+ files within 120 seconds. Bulk files are tagged, never dropped — a codemod you ran on purpose is real context.
+
+**The tag is not evidence of authorship.** Bursts are detected by density in time alone, so a file you edited by hand inside the same 120-second window as a codemod gets swept into the group. The git signal contains the damage — git-changed files sort first regardless of the tag — but if you hand-edit in the middle of a bulk rewrite, expect your file to carry `[bulk]`.
+
+---
+
 ## Known limits
 
 Measured, not hypothetical. Each links the open issue tracking it.
