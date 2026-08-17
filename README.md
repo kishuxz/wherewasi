@@ -235,10 +235,12 @@ If it isn't `pause`, `resume`, or `list`, it isn't in here.
 
 ```sh
 pnpm install
-pnpm test        # 106 tests: capture, storage, redaction, formatting, both provider wire formats
+pnpm test        # 116 tests: capture, storage, redaction, formatting, both provider wire formats
 pnpm build
 ```
 
-Node 20+, TypeScript, ESM.
+Node 20+, TypeScript, ESM. No test requires an API key or touches the network.
+
+[CONTRIBUTING.md](https://github.com/kishuxz/wherewasi/blob/main/CONTRIBUTING.md) covers the branch and PR convention, how prompt changes are evaluated, and what a diagnosable bug report contains.
 
 MIT.
