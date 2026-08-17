@@ -99,11 +99,10 @@ describe("parseAnalysis", () => {
 
 describe("analyze without a key", () => {
   it("returns an error instead of throwing", async () => {
-    const result = await analyze(state, { apiKey: undefined });
-    // Guard against a key present in the ambient environment.
-    if (!process.env["ANTHROPIC_API_KEY"]) {
-      expect(result.analysis).toBeNull();
-      expect(result.error).toMatch(/ANTHROPIC_API_KEY/);
-    }
+    // Explicit empty env, so an ambient key cannot make this pass or fail.
+    const result = await analyze(state, { env: {} });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/GROQ_API_KEY or ANTHROPIC_API_KEY/);
+    expect(result.model).toBeNull();
   });
 });
