@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CapturedState, Session } from "./types.js";
 
@@ -64,6 +64,76 @@ async function readSession(file: string): Promise<Session | null> {
   } catch {
     return null;
   }
+}
+
+export interface RepoSessions {
+  /** bucket directory name — sha256(repoPath)[0..12] */
+  key: string;
+  /**
+   * Original path, read back from the session itself. The bucket name is a
+   * hash and does not reverse, so a session written before `repoPath` was
+   * persisted leaves this null rather than crashing the caller.
+   */
+  repoPath: string | null;
+  /** newest first */
+  sessions: Session[];
+}
+
+/**
+ * Every repo that has stored sessions. The only view that spans repos, which
+ * is what "what am I in the middle of?" actually requires.
+ */
+export async function listRepos(
+  opts: { home?: string; all?: boolean } = {},
+): Promise<RepoSessions[]> {
+  const home = opts.home ?? homedir();
+  const root = path.join(rootDir(home), "sessions");
+
+  let keys: string[];
+  try {
+    keys = await readdir(root);
+  } catch {
+    return [];
+  }
+
+  const repos = await Promise.all(
+    keys.map(async (key): Promise<RepoSessions | null> => {
+      const dir = path.join(root, key);
+      let names: string[];
+      try {
+        names = await readdir(dir);
+      } catch {
+        return null;
+      }
+      const files = names
+        .filter((n) => n.endsWith(".json"))
+        .sort()
+        .reverse()
+        .map((n) => path.join(dir, n));
+      if (!files.length) return null;
+
+      const wanted = opts.all ? files : files.slice(0, 1);
+      const loaded = (await Promise.all(wanted.map(readSession))).filter(
+        (s): s is Session => s !== null,
+      );
+      if (!loaded.length) return null;
+
+      // Fall back through the loaded sessions: only the newest is read in the
+      // default case, but an older one may carry the path when it does not.
+      const repoPath = loaded.find((s) => s.repoPath)?.repoPath ?? null;
+      return { key, repoPath, sessions: loaded };
+    }),
+  );
+
+  return repos
+    .filter((r): r is RepoSessions => r !== null)
+    .sort((a, b) => (b.sessions[0]?.savedAt ?? "").localeCompare(a.sessions[0]?.savedAt ?? ""));
+}
+
+/** Deletes a bucket outright. Used by `status --prune`. */
+export async function removeRepo(key: string, opts: { home?: string } = {}): Promise<void> {
+  const dir = path.join(rootDir(opts.home ?? homedir()), "sessions", key);
+  await rm(dir, { recursive: true, force: true });
 }
 
 /** Most recent first. */

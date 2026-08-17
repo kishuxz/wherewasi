@@ -14,18 +14,22 @@ import {
   hasAnySession,
   latestSession,
   listSessions,
+  listRepos,
   listTags,
+  removeRepo,
   rootDir,
   saveSession,
 } from "./storage.js";
 import { findTranscript, toRef } from "./transcript.js";
 import {
+  colorsEnabled,
   formatList,
   formatResume,
   keylessGuidance,
   makePaint,
   splitWorkingSetEntry,
 } from "./format.js";
+import { formatStatus, toRow } from "./status.js";
 import {
   DEBUG_ENV,
   SHELLS,
@@ -376,6 +380,86 @@ async function cmdList(): Promise<void> {
   process.stdout.write(formatList(sessions));
 }
 
+async function repoExists(repoPath: string | null): Promise<boolean> {
+  if (!repoPath) return false;
+  try {
+    await access(repoPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Asks on a terminal. Without one there is nobody to ask, so it declines. */
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
+async function cmdStatus(opts: {
+  all?: boolean;
+  json?: boolean;
+  prune?: boolean;
+  yes?: boolean;
+}): Promise<void> {
+  const paint = makePaint();
+  const repos = await listRepos({ all: opts.all ?? false });
+  const now = Date.now();
+
+  const rows = (
+    await Promise.all(repos.map(async (r) => toRow(r, await repoExists(r.repoPath), now)))
+  ).filter((r): r is NonNullable<typeof r> => r !== null);
+
+  if (opts.prune) {
+    const gone = rows.filter((r) => !r.exists);
+    if (!gone.length) {
+      process.stdout.write(`\n  Nothing to prune — every repo still exists.\n\n`);
+      return;
+    }
+
+    process.stdout.write(`\n  ${paint("These repos no longer exist on disk:", "bold")}\n\n`);
+    for (const r of gone) {
+      process.stdout.write(
+        `    ${r.repoName}  ${paint(`${r.sessionCount} pause(s)`, "dim")}\n` +
+          (r.repoPath ? `      ${paint(r.repoPath, "dim")}\n` : ""),
+      );
+    }
+    process.stdout.write("\n");
+
+    if (!opts.yes) {
+      const ok = await confirm("  Delete their saved context? This cannot be undone [y/N] ");
+      if (!ok) {
+        process.stdout.write(
+          process.stdin.isTTY
+            ? "  Left alone.\n\n"
+            : `  ${paint("Not a terminal — re-run with --yes to prune non-interactively.", "yellow")}\n\n`,
+        );
+        return;
+      }
+    }
+
+    for (const r of gone) await removeRepo(r.key);
+    process.stdout.write(
+      `  ${paint("✓", "green")} Pruned ${gone.length} repo${gone.length === 1 ? "" : "s"}.\n\n`,
+    );
+    return;
+  }
+
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write(formatStatus(rows, { now, color: colorsEnabled(), all: opts.all ?? false }));
+}
+
 /**
  * Absolute paths to the node running us and to this entrypoint, embedded into
  * the hook and the snippet. Both absolute so an automatic capture does not
@@ -535,6 +619,17 @@ program
   .description("print the most recent pause for this repo")
   .action(async (tag: string | undefined, opts: { open?: boolean }) => {
     await cmdResume(tag, opts);
+  });
+
+program
+  .command("status")
+  .option("--all", "every session, not just the most recent per repo")
+  .option("--json", "machine-readable output")
+  .option("--prune", "delete saved context for repos that no longer exist")
+  .option("--yes", "skip the confirmation prompt when pruning")
+  .description("what you are in the middle of, across every repo")
+  .action(async (opts: { all?: boolean; json?: boolean; prune?: boolean; yes?: boolean }) => {
+    await cmdStatus(opts);
   });
 
 program

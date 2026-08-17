@@ -243,6 +243,39 @@ $ wherewasi list
 
 A tagged pause anchors its file scan to your last pause **with the same tag**. Anchoring to the globally-latest pause would be wrong here — it belongs to the other investigation, and would give this one a window far too short. Asking for a tag that does not exist tells you which ones do.
 
+### `wherewasi status`
+
+`resume` and `list` are both scoped to one repo. Neither can answer _"what am I in the middle of?"_, because with several worktrees and a couple of agents running, that question spans repos.
+
+```console
+$ wherewasi status
+
+  collector-api  just now · main · token-refresh  from session
+    ~/conductor/workspaces/collector-api
+    You were trying to get the collector auth token refresh working.
+    blocked: packages/guard/src/index.ts — guard build fails because core no longer exports evaluate, blocking the test run
+
+  grid-ui  2 weeks ago · main  stale
+    ~/conductor/workspaces/grid-ui
+    You were fixing the responsive grid collapse.
+
+  doomed-worktree  3 days ago · main  directory gone
+    ~/conductor/workspaces/doomed-worktree
+    (no analysis) half-done migration
+
+  1 repo no longer exists on disk. Remove with wherewasi status --prune.
+```
+
+Newest first, anything past a week flagged `stale`, and the blocker taken from the `working_set` the analysis already recorded rather than worked out again.
+
+Ephemeral worktrees mean saved context routinely outlives its directory — that is normal, so it is marked rather than treated as an error:
+
+```sh
+wherewasi status --all      # every session, not just the latest per repo
+wherewasi status --json     # for scripting
+wherewasi status --prune    # drop context for repos that are gone (asks first; --yes to skip)
+```
+
 ### `wherewasi list`
 
 Recent pauses for this repo: when, branch, first line of the summary. Automatic captures are marked `⟳`, so the pause you deliberately made stays findable.
@@ -398,7 +431,7 @@ One JSON file per pause, holding the raw captured state plus the analysis. Repos
 
 No daemon. No background process. No editor plugin. No web UI. No team features. No config file. No settings.
 
-If it isn't `pause`, `resume`, or `list`, it isn't in here.
+If it isn’t `pause`, `resume`, `list` or `status`, it isn’t in here.
 
 ---
 
@@ -406,7 +439,7 @@ If it isn't `pause`, `resume`, or `list`, it isn't in here.
 
 ```sh
 pnpm install
-pnpm test        # 193 tests: capture, storage, redaction, formatting, hooks, transcripts, both provider wire formats
+pnpm test        # 211 tests: capture, storage, redaction, formatting, hooks, transcripts, status, both provider wire formats
 pnpm build
 ```
 
