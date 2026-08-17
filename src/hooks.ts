@@ -31,7 +31,23 @@ export const MARKER = "wherewasi:auto-capture";
  * fail-silent is exactly what hides it.
  */
 export function launchLine(nodePath: string, cliPath: string): string {
-  return `( nohup ${JSON.stringify(nodePath)} ${JSON.stringify(cliPath)} pause --auto >/dev/null 2>&1 & )`;
+  return `( nohup ${shQuote(nodePath)} ${shQuote(cliPath)} pause --auto >/dev/null 2>&1 & )`;
+}
+
+/**
+ * POSIX single-quoting. Inside single quotes the shell expands nothing, so a
+ * path containing `$`, a backtick or a space is safe. Double quotes — which is
+ * what JSON.stringify produces — still expand `$` and backticks.
+ */
+export function shQuote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * fish single-quoting. Only `\` and `'` are special inside fish single quotes.
+ */
+export function fishQuote(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
 export function postCheckoutHook(nodePath: string, cliPath: string): string {
@@ -69,12 +85,19 @@ export function shellSnippet(shell: Shell, nodePath: string, cliPath: string): s
   const launch = launchLine(nodePath, cliPath);
 
   if (shell === "fish") {
+    // fish cannot express this itself. `( … )` is command substitution, not a
+    // subshell, so the POSIX form is a syntax error — and with fish's own
+    // backgrounding the capture is killed during startup regardless of `nohup`
+    // and `disown` (measured: 0 captures either way, foreground works).
+    //
+    // Delegating to sh fixes both. The intermediate sh forks the capture and
+    // exits immediately, leaving it reparented with nothing for fish to kill.
     return `# ${MARKER}
 # Add to ~/.config/fish/config.fish:
 #   wherewasi shell-init fish | source
 
 function __wherewasi_auto_capture --on-event fish_exit
-    ${launch}
+    command sh -c ${fishQuote(launch)}
 end
 `;
   }
