@@ -1,3 +1,4 @@
+import { DIFF_LIMIT } from "./capture.js";
 import type { Session } from "./types.js";
 
 const ESC = {
@@ -104,6 +105,35 @@ export function describeWindow(session: Session): string {
   }
 }
 
+/**
+ * Names the diffs that were cut, or null if nothing was.
+ *
+ * Truncation is the one failure the output cannot otherwise reveal: hunks past
+ * the cap were invisible to the model, so `working_set` narrows while reading
+ * exactly as confident as a complete answer. A returning developer has no way
+ * to tell a two-file working set that is complete from one that is missing a
+ * third, so the incompleteness has to be stated rather than implied.
+ */
+export function truncationNotice(session: Session): string | null {
+  const { diffTruncated, stagedDiffTruncated } = session.git;
+  if (!diffTruncated && !stagedDiffTruncated) return null;
+
+  const which =
+    diffTruncated && stagedDiffTruncated
+      ? "Both diffs were"
+      : diffTruncated
+        ? "The unstaged diff was"
+        : "The staged diff was";
+
+  // Raw-state sessions have no working set to qualify, so name what is
+  // actually at stake there: the stored diff itself is partial.
+  const consequence = session.analysis
+    ? "was not analysed, so this working set may be incomplete"
+    : "was not captured, so the stored diff is partial";
+
+  return `⚠ ${which} truncated at ${DIFF_LIMIT} chars — anything past the cut ${consequence}.`;
+}
+
 export function formatResume(
   session: Session,
   opts: { now?: number; color?: boolean } = {},
@@ -148,6 +178,13 @@ export function formatResume(
             : `    ${paint(path, "cyan")}`,
         );
       }
+      out.push("");
+    }
+
+    // Directly under the working set, because that is the field it qualifies.
+    const cut = truncationNotice(session);
+    if (cut) {
+      out.push(paint(wrap(cut, 74, "  "), "yellow"));
       out.push("");
     }
 
@@ -202,6 +239,13 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
     const lines = session.input.trimEnd().split("\n");
     out.push(paint("  Captured output (tail)", "bold"));
     for (const line of lines.slice(-12)) out.push(`    ${paint(line, "dim")}`);
+    out.push("");
+  }
+
+  // Worth saying even with no analysis: the stored diff itself is partial.
+  const cut = truncationNotice(session);
+  if (cut) {
+    out.push(paint(wrap(cut, 74, "  "), "yellow"));
     out.push("");
   }
 

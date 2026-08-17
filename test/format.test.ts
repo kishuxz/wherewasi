@@ -4,6 +4,7 @@ import {
   formatResume,
   relativeTime,
   splitWorkingSetEntry,
+  truncationNotice,
   wrap,
 } from "../src/format.js";
 import type { Session } from "../src/types.js";
@@ -233,5 +234,42 @@ describe("describeWindow", () => {
     const out = formatResume(raw, opts);
     expect(out).toContain("WHEREWASI_API_KEY");
     expect(out).not.toContain("ANTHROPIC_API_KEY");
+  });
+});
+
+describe("truncationNotice", () => {
+  const cut = (diff: boolean, staged: boolean): Session => ({
+    ...base,
+    git: { ...base.git, diffTruncated: diff, stagedDiffTruncated: staged },
+  });
+
+  it("says nothing when neither diff was cut", () => {
+    expect(truncationNotice(base)).toBeNull();
+    expect(formatResume(base, opts)).not.toContain("truncated at");
+  });
+
+  it("names which diff was cut", () => {
+    expect(truncationNotice(cut(true, false))).toContain("The unstaged diff was truncated");
+    expect(truncationNotice(cut(false, true))).toContain("The staged diff was truncated");
+    expect(truncationNotice(cut(true, true))).toContain("Both diffs were truncated");
+  });
+
+  it("names the cap so the number is not folklore", () => {
+    expect(truncationNotice(cut(true, false))).toContain("8000 chars");
+  });
+
+  it("warns that the working set may be incomplete", () => {
+    const out = formatResume(cut(true, false), opts);
+    expect(out).toContain("this working set may be incomplete");
+    // Directly under the field it qualifies, not buried at the end.
+    expect(out.indexOf("Working set")).toBeLessThan(out.indexOf("may be incomplete"));
+    expect(out.indexOf("may be incomplete")).toBeLessThan(out.indexOf("Next step"));
+  });
+
+  it("warns on raw state too, without claiming a working set exists", () => {
+    const raw = { ...cut(true, false), analysis: null };
+    const out = formatResume(raw, opts);
+    expect(out).toContain("the stored diff is partial");
+    expect(out).not.toContain("working set may be incomplete");
   });
 });
