@@ -5,6 +5,9 @@ import {
   captureState,
   findRecentFiles,
   findRepoRoot,
+  markBursts,
+  parseSince,
+  pathsFromStatus,
   truncate,
 } from "../src/capture.js";
 import { FixtureRepo } from "./helpers/fixture-repo.js";
@@ -89,17 +92,52 @@ describe("capture layer", () => {
     expect(paths.some((p) => p.startsWith(".git/"))).toBe(false);
   });
 
-  it("caps the recent-file list at 15", async () => {
+  it("caps the recent-file list at 40", async () => {
     const many = await FixtureRepo.create("wherewasi-many-");
     try {
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < 60; i++) {
         await many.write(`f${String(i).padStart(2, "0")}.txt`, "x", minutesAgo(i + 1));
       }
-      const files = await findRecentFiles(many.dir, { now });
-      expect(files).toHaveLength(15);
+      const files = await findRecentFiles(many.dir, { now, since: new Date(now - 86_400_000) });
+      expect(files).toHaveLength(40);
       expect(files[0]?.path).toBe("f00.txt"); // most recently modified
     } finally {
       await many.cleanup();
+    }
+  });
+
+  it("sorts git-changed files ahead of mtime-only ones", async () => {
+    const repo2 = await FixtureRepo.create("wherewasi-sort-");
+    try {
+      // The git-changed file is OLDER, so mtime alone would rank it last.
+      await repo2.write("touched-recently.txt", "x", minutesAgo(1));
+      await repo2.write("changed-in-git.txt", "x", minutesAgo(90));
+      const files = await findRecentFiles(repo2.dir, {
+        now,
+        since: new Date(now - 86_400_000),
+        gitPaths: new Set(["changed-in-git.txt"]),
+      });
+      expect(files[0]?.path).toBe("changed-in-git.txt");
+      expect(files[0]?.inGit).toBe(true);
+      expect(files[1]?.inGit).toBe(false);
+    } finally {
+      await repo2.cleanup();
+    }
+  });
+
+  it("respects an explicit since instant", async () => {
+    const repo3 = await FixtureRepo.create("wherewasi-since-");
+    try {
+      await repo3.write("new.txt", "x", minutesAgo(10));
+      await repo3.write("old.txt", "x", minutesAgo(400));
+      const narrow = await findRecentFiles(repo3.dir, { now, since: new Date(now - 3_600_000) });
+      expect(narrow.map((f) => f.path)).toContain("new.txt");
+      expect(narrow.map((f) => f.path)).not.toContain("old.txt");
+
+      const wide = await findRecentFiles(repo3.dir, { now, since: new Date(now - 86_400_000) });
+      expect(wide.map((f) => f.path)).toContain("old.txt");
+    } finally {
+      await repo3.cleanup();
     }
   });
 
@@ -166,5 +204,75 @@ describe("capture layer", () => {
     const started = Date.now();
     await captureState({ cwd: repo.dir, now });
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
+describe("recency window", () => {
+  const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
+
+  describe("parseSince", () => {
+    it("parses relative durations", () => {
+      expect(parseSince("30m", NOW)?.toISOString()).toBe("2026-01-15T11:30:00.000Z");
+      expect(parseSince("2h", NOW)?.toISOString()).toBe("2026-01-15T10:00:00.000Z");
+      expect(parseSince("1d", NOW)?.toISOString()).toBe("2026-01-14T12:00:00.000Z");
+      expect(parseSince("45s", NOW)?.toISOString()).toBe("2026-01-15T11:59:15.000Z");
+      expect(parseSince(" 2 h ", NOW)?.toISOString()).toBe("2026-01-15T10:00:00.000Z");
+    });
+
+    it("parses an ISO timestamp", () => {
+      expect(parseSince("2026-01-14T09:00:00.000Z", NOW)?.toISOString()).toBe(
+        "2026-01-14T09:00:00.000Z",
+      );
+    });
+
+    it("returns null for nonsense", () => {
+      for (const bad of ["", "  ", "yesterday", "2x", "-3h", "h"]) {
+        expect(parseSince(bad, NOW)).toBeNull();
+      }
+    });
+  });
+
+  describe("pathsFromStatus", () => {
+    it("extracts paths across status codes", () => {
+      const paths = pathsFromStatus(
+        [" M src/a.ts", "?? src/b.ts", "A  src/c.ts", "MM src/d.ts"].join("\n"),
+      );
+      expect([...paths].sort()).toEqual(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]);
+    });
+
+    it("takes the destination of a rename", () => {
+      const paths = pathsFromStatus("R  src/old.ts -> src/new.ts");
+      expect(paths.has("src/new.ts")).toBe(true);
+      expect(paths.has("src/old.ts")).toBe(false);
+    });
+
+    it("handles quoted paths and blank lines", () => {
+      const paths = pathsFromStatus('?? "src/has space.ts"\n\n');
+      expect(paths.has("src/has space.ts")).toBe(true);
+    });
+  });
+
+  describe("markBursts", () => {
+    it("tags a dense cluster as a bulk edit", () => {
+      // 20 files written inside one second — an agent or a codemod.
+      const files = Array.from({ length: 20 }, (_, i) => ({ mtimeMs: NOW + i * 50 }));
+      expect(markBursts(files)).toBe(20);
+      expect(files.every((f) => (f as { bulk?: boolean }).bulk)).toBe(true);
+    });
+
+    it("leaves human-paced edits alone", () => {
+      // 10 files, minutes apart.
+      const files = Array.from({ length: 10 }, (_, i) => ({ mtimeMs: NOW + i * 300_000 }));
+      expect(markBursts(files)).toBe(0);
+      expect(files.some((f) => (f as { bulk?: boolean }).bulk)).toBe(false);
+    });
+
+    it("tags only the burst, not files around it", () => {
+      const burst = Array.from({ length: 18 }, (_, i) => ({ mtimeMs: NOW + i * 100 }));
+      const human = [{ mtimeMs: NOW - 3_600_000 }, { mtimeMs: NOW + 3_600_000 }];
+      const all = [...human, ...burst];
+      expect(markBursts(all)).toBe(18);
+      expect(human.every((f) => !(f as { bulk?: boolean }).bulk)).toBe(true);
+    });
   });
 });

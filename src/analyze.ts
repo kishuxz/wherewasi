@@ -68,12 +68,27 @@ export function buildPrompt(state: CapturedState): string {
     out += section("branch", "(not a git repository)");
   }
 
+  const bulkCount = state.recentFiles.filter((f) => f.bulk).length;
   out += section(
-    "files_modified_in_last_2_hours",
+    "recently_touched_files",
     state.recentFiles.length
-      ? state.recentFiles.map((f) => `${f.path}\t${f.mtime}`).join("\n")
+      ? state.recentFiles
+          .map((f) => {
+            const tags = [f.inGit ? "git-changed" : "mtime-only", f.bulk ? "bulk-edit" : null]
+              .filter(Boolean)
+              .join(", ");
+            return `${f.path}\t${f.mtime}\t[${tags}]`;
+          })
+          .join("\n")
       : "(none)",
   );
+
+  if (bulkCount > 0) {
+    out += section(
+      "reading_the_file_list",
+      "Files tagged bulk-edit were written together in seconds — a codemod, a formatter, or an agent — so they show attention far less reliably than files touched individually. Weight them below the rest. Files tagged git-changed are the strongest signal; mtime-only files may just have been read or rebuilt.",
+    );
+  }
 
   out += "Reconstruct what this developer was thinking. Return only the JSON object.";
   return out;

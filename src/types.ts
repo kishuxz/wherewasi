@@ -18,6 +18,19 @@ export interface RecentFile {
   /** repo-relative, POSIX separators */
   path: string;
   mtime: string;
+  /** git also reports this path as changed — the stronger signal of the two */
+  inGit?: boolean;
+  /** part of a cluster of files written together, likely a bulk or agent edit */
+  bulk?: boolean;
+}
+
+/** How the mtime scan window was chosen, so `resume` can be honest about it. */
+export interface RecencyWindow {
+  /** ISO timestamp; files modified after this were considered */
+  from: string;
+  source: "last-pause" | "fallback" | "explicit";
+  /** number of files tagged as part of a bulk edit */
+  bulkCount: number;
 }
 
 export interface CapturedState {
@@ -25,6 +38,8 @@ export interface CapturedState {
   repoPath: string;
   git: GitState;
   recentFiles: RecentFile[];
+  /** absent on sessions written before the window became configurable */
+  window?: RecencyWindow;
   note: string | null;
   /** piped stdin, if any */
   input: string | null;

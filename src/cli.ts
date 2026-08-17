@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { fstatSync } from "node:fs";
 import path from "node:path";
-import { captureState, findRepoRoot } from "./capture.js";
+import { captureState, findRepoRoot, parseSince } from "./capture.js";
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
@@ -71,12 +71,39 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function cmdPause(note: string | undefined): Promise<void> {
+async function cmdPause(note: string | undefined, opts: { since?: string }): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
 
   const input = await readStdin();
-  const state = await captureState({ cwd: process.cwd(), note: note ?? null, input });
+
+  // Anchor the mtime scan to the last pause for this repo. A fixed window is
+  // wrong in both directions: too short after a long absence, too long after a
+  // five-minute interruption.
+  const repoPath = await resolveRepoPath();
+  let since: Date | null = null;
+  let sinceSource: "last-pause" | "explicit" | undefined;
+
+  if (opts.since) {
+    since = parseSince(opts.since);
+    if (!since)
+      fail(`could not parse --since "${opts.since}" (try 30m, 2h, 1d, or an ISO timestamp)`);
+    sinceSource = "explicit";
+  } else {
+    const previous = await latestSession(repoPath);
+    if (previous) {
+      since = new Date(previous.savedAt);
+      sinceSource = "last-pause";
+    }
+  }
+
+  const state = await captureState({
+    cwd: process.cwd(),
+    note: note ?? null,
+    input,
+    since,
+    ...(sinceSource ? { sinceSource } : {}),
+  });
   const captureMs = Date.now() - started;
 
   // Redact at rest as well as in flight: the session file is a durable artifact.
@@ -199,9 +226,13 @@ program
 program
   .command("pause")
   .argument("[note]", "freeform note about what you were doing")
+  .option(
+    "--since <when>",
+    "scan files modified since 30m / 2h / 1d / an ISO timestamp (default: your last pause)",
+  )
   .description("capture what you were working on, and why")
-  .action(async (note?: string) => {
-    await cmdPause(note);
+  .action(async (note: string | undefined, opts: { since?: string }) => {
+    await cmdPause(note, opts);
   });
 
 program
