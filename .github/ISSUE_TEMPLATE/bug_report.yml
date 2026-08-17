@@ -1,0 +1,79 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. The environment fields below look like boilerplate but are not — provider, model and Node version account for most reports that turn out not to be bugs.
+
+        **Session files contain your code.** They hold your diff, your note and any piped output — redacted for secrets, but not for source. Read one before pasting it here; a fragment is almost always enough.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+      placeholder: |
+        $ pnpm test 2>&1 | wherewasi pause "auth failing"
+        Expected: the failing test's file named as a blocker
+        Got: working_set listed only the two files I had edited
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and base URL
+      description: Groq, OpenAI, Ollama, Anthropic, other. These fail in different ways, and Anthropic is a separate wire format.
+      placeholder: Ollama — http://localhost:11434/v1
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: "Below roughly 70B, output degrades into something structurally valid and substantively useless (#26). That looks exactly like a tool bug."
+      placeholder: openai/gpt-oss-120b
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: "`node --version`. The package requires >= 20."
+      placeholder: v20.20.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: truncated
+    attributes:
+      label: Did `resume` print the truncation warning?
+      description: "A narrow `working_set` on a truncated diff is documented behaviour (#25), not a defect — but only this tells the two apart. Look for `⚠ ... truncated at 8000 chars`."
+      options:
+        - "No — no truncation warning was shown"
+        - "Yes — the diff was truncated"
+        - "Not applicable — this is not about working_set"
+        - "Don't know"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: wherewasi version
+      description: "`wherewasi --version`, or the commit if running from source."
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Repo shape (monorepo? large diff?), whether it reproduces every time, what you already ruled out.
+    validations:
+      required: false
