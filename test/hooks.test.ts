@@ -6,10 +6,12 @@ import {
   MARKER,
   SHELLS,
   detectShell,
+  fishQuote,
   hookPath,
   installHook,
   launchLine,
   postCheckoutHook,
+  shQuote,
   shellSnippet,
   uninstallHook,
 } from "../src/hooks.js";
@@ -31,10 +33,17 @@ describe("launchLine", () => {
     expect(launchLine(NODE, CLI)).toContain(">/dev/null 2>&1");
   });
 
-  it("quotes the path so a space in it cannot split the command", () => {
+  it("single-quotes paths, so a space cannot split the command", () => {
     expect(launchLine(NODE, "/Users/a b/wherewasi/dist/cli.js")).toContain(
-      '"/Users/a b/wherewasi/dist/cli.js"',
+      "'/Users/a b/wherewasi/dist/cli.js'",
     );
+  });
+
+  it("does not leave a path open to shell expansion", () => {
+    // Double quotes would still expand these. Single quotes expand nothing.
+    const line = launchLine(NODE, "/tmp/a $HOME/`id`/cli.js");
+    expect(line).toContain("'/tmp/a $HOME/`id`/cli.js'");
+    expect(line).not.toContain('"');
   });
 });
 
@@ -80,6 +89,22 @@ describe("shellSnippet", () => {
     expect(s).not.toContain("trap ");
   });
 
+  it("never emits the POSIX subshell form into fish", () => {
+    // `( … )` is command substitution in fish, not a subshell. Emitting it is
+    // a syntax error, and it shipped once because the tests only checked for
+    // substrings rather than validity.
+    const body = shellSnippet("fish", NODE, CLI)
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("#"));
+    expect(body.some((l) => l.trimStart().startsWith("("))).toBe(false);
+  });
+
+  it("delegates backgrounding to sh in fish", () => {
+    // fish kills its own background jobs at exit regardless of nohup/disown;
+    // the intermediate sh exits immediately and leaves the capture reparented.
+    expect(shellSnippet("fish", NODE, CLI)).toContain("command sh -c ");
+  });
+
   it("names the right rc file per shell", () => {
     expect(shellSnippet("zsh", NODE, CLI)).toContain("~/.zshrc");
     expect(shellSnippet("bash", NODE, CLI)).toContain("~/.bashrc");
@@ -90,6 +115,18 @@ describe("shellSnippet", () => {
     for (const shell of SHELLS) {
       expect(shellSnippet(shell, NODE, CLI)).toContain("nohup");
     }
+  });
+});
+
+describe("quoting", () => {
+  it("shQuote closes a single-quoted string safely", () => {
+    expect(shQuote("plain")).toBe("'plain'");
+    expect(shQuote("it's")).toBe("'it'\\''s'");
+  });
+
+  it("fishQuote escapes backslash and quote", () => {
+    expect(fishQuote("a'b")).toBe("'a\\'b'");
+    expect(fishQuote("a\\b")).toBe("'a\\\\b'");
   });
 });
 

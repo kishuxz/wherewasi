@@ -214,6 +214,12 @@ wherewasi install-hook                  # capture on branch switch
 eval "$(wherewasi shell-init zsh)"      # capture when the shell exits
 ```
 
+`bash` and `zsh` take that `eval` line in `~/.bashrc` / `~/.zshrc`. fish uses its own syntax, in `~/.config/fish/config.fish`:
+
+```fish
+wherewasi shell-init fish | source
+```
+
 `install-hook` writes a git `post-checkout` hook into the current repo. `shell-init` prints a snippet for your `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` — it writes nothing itself. Both print exactly what they will do first, and both come back out:
 
 ```sh

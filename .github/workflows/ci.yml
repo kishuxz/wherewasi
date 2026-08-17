@@ -42,3 +42,19 @@ jobs:
         run: |
           node dist/cli.js --version
           node dist/cli.js --help
+
+      # We generate shell code for four shells, and unit tests can only assert
+      # that strings contain substrings. The fish snippet shipped as a syntax
+      # error for exactly that reason. Parse each one with its real shell.
+      - name: Install shells for syntax checking
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fish zsh
+
+      - name: Parse every generated shell integration
+        run: |
+          set -e
+          node -e "import('./dist/hooks.js').then(m=>process.stdout.write(m.postCheckoutHook('/usr/bin/node','/x/cli.js')))" > /tmp/hook.sh
+          sh -n /tmp/hook.sh
+
+          node dist/cli.js shell-init bash > /tmp/init.bash && bash -n /tmp/init.bash
+          node dist/cli.js shell-init zsh  > /tmp/init.zsh  && zsh  -n /tmp/init.zsh
+          node dist/cli.js shell-init fish > /tmp/init.fish && fish -n /tmp/init.fish
