@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { analyze } from "../src/analyze.js";
-import { AnthropicProvider, GroqProvider } from "../src/providers/index.js";
+import { AnthropicProvider, OpenAICompatibleProvider } from "../src/providers/index.js";
 import type { CapturedState } from "../src/types.js";
 
 /**
@@ -97,14 +97,18 @@ const anthropicOk = (text: string) => ({
 });
 
 const groq = (model?: string) =>
-  new GroqProvider({ apiKey: "gsk_test", baseUrl: `${baseUrl}/openai/v1`, model: model ?? "" });
+  new OpenAICompatibleProvider({
+    apiKey: "gsk_test",
+    baseUrl: `${baseUrl}/openai/v1`,
+    model: model ?? "",
+  });
 
 const anthropic = () => {
   process.env["ANTHROPIC_BASE_URL"] = baseUrl;
   return new AnthropicProvider({ apiKey: "sk-ant-test" });
 };
 
-describe("Groq provider", () => {
+describe("OpenAI-compatible provider", () => {
   it("sends an OpenAI chat-completions request and parses the analysis", async () => {
     requests = [];
     respond = (res) => json(res, 200, groqOk(JSON.stringify(reply)));
@@ -150,7 +154,7 @@ describe("Groq provider", () => {
     respond = (res) => json(res, 401, { error: { message: "Invalid API Key" } });
     const result = await analyze(state, { provider: groq() });
     expect(result.analysis).toBeNull();
-    expect(result.error).toMatch(/rejected the API key/i);
+    expect(result.error).toMatch(/key was rejected/i);
   });
 
   it("reports a server error without throwing", async () => {
@@ -263,6 +267,6 @@ describe("no provider", () => {
   it("degrades to raw state when no key is set", async () => {
     const result = await analyze(state, { env: {} });
     expect(result.analysis).toBeNull();
-    expect(result.error).toMatch(/GROQ_API_KEY or ANTHROPIC_API_KEY/);
+    expect(result.error).toMatch(/WHEREWASI_API_KEY/);
   });
 });

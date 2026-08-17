@@ -117,7 +117,7 @@ async function cmdPause(note: string | undefined): Promise<void> {
     );
     if (!hasKey) {
       process.stdout.write(
-        `    ${paint("Set GROQ_API_KEY to also capture the reasoning behind it.", "yellow")}\n`,
+        `    ${paint("Set WHEREWASI_API_KEY to also capture the reasoning behind it.", "yellow")}\n`,
       );
     } else {
       process.stdout.write(`    ${paint(`Analysis unavailable: ${error}`, "yellow")}\n`);

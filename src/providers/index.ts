@@ -1,9 +1,18 @@
 import { AnthropicProvider } from "./anthropic.js";
-import { GroqProvider } from "./groq.js";
-import type { Provider, ProviderName } from "./types.js";
+import {
+  DEFAULT_BASE_URL,
+  OpenAICompatibleProvider,
+  isLocalEndpoint,
+} from "./openai-compatible.js";
+import type { Provider } from "./types.js";
 
 export * from "./types.js";
-export { GroqProvider, GROQ_DEFAULT_MODEL, GROQ_DEFAULT_BASE_URL } from "./groq.js";
+export {
+  OpenAICompatibleProvider,
+  DEFAULT_MODEL,
+  DEFAULT_BASE_URL,
+  isLocalEndpoint,
+} from "./openai-compatible.js";
 export { AnthropicProvider, ANTHROPIC_DEFAULT_MODEL } from "./anthropic.js";
 
 export type ProviderEnv = Record<string, string | undefined>;
@@ -14,63 +23,64 @@ export interface Selection {
   reason: string | null;
 }
 
-function requested(env: ProviderEnv): ProviderName | null {
-  const raw = env["WHEREWASI_PROVIDER"]?.trim().toLowerCase();
-  if (raw === "groq" || raw === "anthropic") return raw;
-  return null;
+const ANTHROPIC_HOST = "api.anthropic.com";
+
+function usesAnthropic(env: ProviderEnv): boolean {
+  const explicit = env["WHEREWASI_PROVIDER"]?.trim().toLowerCase();
+  if (explicit === "anthropic") return true;
+  if (explicit === "openai" || explicit === "openai-compatible" || explicit === "groq") {
+    return false;
+  }
+  const baseUrl = env["WHEREWASI_BASE_URL"]?.trim();
+  if (baseUrl?.includes(ANTHROPIC_HOST)) return true;
+  // Legacy: an Anthropic key with no OpenAI-compatible key selects Anthropic.
+  if (!baseUrl && !env["WHEREWASI_API_KEY"] && !env["GROQ_API_KEY"] && env["ANTHROPIC_API_KEY"]) {
+    return true;
+  }
+  return false;
 }
 
 /**
- * Groq is the default because it is reachable on a free tier. Anthropic is used
- * when it is the only key present, or when explicitly asked for.
+ * One OpenAI-compatible path covers Groq, OpenAI, Together, OpenRouter,
+ * DeepSeek and a local Ollama — they differ only by base URL and model id.
+ * Anthropic is the one genuine exception, since its wire format differs.
  */
 export function selectProvider(env: ProviderEnv = process.env): Selection {
-  const groqKey = env["GROQ_API_KEY"]?.trim();
-  const anthropicKey = env["ANTHROPIC_API_KEY"]?.trim();
-  const explicit = requested(env);
-
-  if (explicit === "anthropic") {
-    if (!anthropicKey) {
+  if (usesAnthropic(env)) {
+    const key = env["WHEREWASI_API_KEY"]?.trim() || env["ANTHROPIC_API_KEY"]?.trim();
+    if (!key) {
       return {
         provider: null,
-        reason: "WHEREWASI_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set",
+        reason: "Anthropic selected but neither WHEREWASI_API_KEY nor ANTHROPIC_API_KEY is set",
       };
     }
     return {
       provider: new AnthropicProvider({
-        apiKey: anthropicKey,
-        model: env["ANTHROPIC_MODEL"] ?? "",
+        apiKey: key,
+        model: env["WHEREWASI_MODEL"] ?? env["ANTHROPIC_MODEL"] ?? "",
       }),
       reason: null,
     };
   }
 
-  if (explicit === "groq") {
-    if (!groqKey) {
-      return { provider: null, reason: "WHEREWASI_PROVIDER=groq but GROQ_API_KEY is not set" };
-    }
-    return { provider: buildGroq(groqKey, env), reason: null };
-  }
+  const baseUrl =
+    env["WHEREWASI_BASE_URL"]?.trim() || env["GROQ_BASE_URL"]?.trim() || DEFAULT_BASE_URL;
+  const key = env["WHEREWASI_API_KEY"]?.trim() || env["GROQ_API_KEY"]?.trim();
 
-  if (groqKey) return { provider: buildGroq(groqKey, env), reason: null };
-
-  if (anthropicKey) {
+  // A local endpoint needs no credential, which is the point of running one.
+  if (!key && !isLocalEndpoint(baseUrl)) {
     return {
-      provider: new AnthropicProvider({
-        apiKey: anthropicKey,
-        model: env["ANTHROPIC_MODEL"] ?? "",
-      }),
-      reason: null,
+      provider: null,
+      reason: "no API key set (WHEREWASI_API_KEY, or GROQ_API_KEY for the default endpoint)",
     };
   }
 
-  return { provider: null, reason: "no API key set (GROQ_API_KEY or ANTHROPIC_API_KEY)" };
-}
-
-function buildGroq(apiKey: string, env: ProviderEnv): Provider {
-  return new GroqProvider({
-    apiKey,
-    model: env["GROQ_MODEL"] ?? "",
-    baseUrl: env["GROQ_BASE_URL"] ?? "",
-  });
+  return {
+    provider: new OpenAICompatibleProvider({
+      apiKey: key ?? "",
+      model: env["WHEREWASI_MODEL"] ?? env["GROQ_MODEL"] ?? "",
+      baseUrl,
+    }),
+    reason: null,
+  };
 }

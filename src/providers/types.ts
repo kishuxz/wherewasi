@@ -17,7 +17,7 @@ export interface Provider {
   complete(req: ProviderRequest): Promise<ProviderResult>;
 }
 
-export type ProviderName = "groq" | "anthropic";
+export type ProviderName = "openai-compatible" | "anthropic";
 
 /**
  * Why a call failed, in the terms `pause` needs to report.
