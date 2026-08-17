@@ -79,6 +79,31 @@ function firstLine(text: string): string {
   return line ? line.trim() : "";
 }
 
+/**
+ * Describes the mtime window the session actually used. The window stopped
+ * being a fixed two hours when it was anchored to the previous pause, so the
+ * heading has to read it rather than assert it. Sessions written before the
+ * window was recorded carry no `window` at all.
+ */
+export function describeWindow(session: Session): string {
+  const w = session.window;
+  if (!w) return "Files touched before you paused";
+  switch (w.source) {
+    case "last-pause":
+      return "Files touched since your previous pause";
+    case "explicit": {
+      // Anchored to the pause, not to now — the window is a property of when
+      // the capture ran, so it must not drift each time the session is read.
+      const span = relativeTime(w.from, new Date(session.savedAt).getTime());
+      return span === "just now"
+        ? "Files touched just before you paused"
+        : `Files touched since ${span.replace(/ ago$/, "")} before you paused`;
+    }
+    case "fallback":
+      return "Files touched in the 2 hours before you paused";
+  }
+}
+
 export function formatResume(
   session: Session,
   opts: { now?: number; color?: boolean } = {},
@@ -162,7 +187,7 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
   }
 
   if (session.recentFiles.length) {
-    out.push(paint("  Files touched in the 2 hours before you paused", "bold"));
+    out.push(paint(`  ${describeWindow(session)}`, "bold"));
     for (const f of session.recentFiles) out.push(`    ${paint(f.path, "cyan")}`);
     out.push("");
   }
@@ -184,7 +209,7 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
   out.push(paint(`  ⚠ Raw state only — ${reason}.`, "yellow"));
   out.push(
     paint(
-      "    With ANTHROPIC_API_KEY set, this would instead be a three-sentence summary of",
+      "    With WHEREWASI_API_KEY set, this would instead be a three-sentence summary of",
       "dim",
     ),
   );
