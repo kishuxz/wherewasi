@@ -56,6 +56,50 @@ Nothing in that diff said _why_ the rename was happening. The note said the goal
 
 ---
 
+## It reads your Claude Code session
+
+The obvious objection to this tool is _"I'm already in a Claude Code session — I'll just ask it to write me a handoff doc."_ That is fair, and the answer is not to compete with it. Claude Code **witnessed** your reasoning. `wherewasi` only ever saw the residue: a diff, some mtimes. So it reads the session instead of guessing at it, and keeps the automatic triggering a handoff doc does not have.
+
+`resume` tells you which kind of answer you are holding:
+
+```
+← where you were  6 minutes ago · main · token-refresh
+  reconstructed from your Claude Code session — 8 turn(s)
+```
+
+versus
+
+```
+  inferred from the diff
+```
+
+### Exactly what is read
+
+Reading an AI conversation is a bigger step than reading a diff, so here is all of it, plainly:
+
+|                    |                                                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| **Where from**     | `~/.claude/projects/<encoded repo path>/<session>.jsonl` — the newest session whose records match this repo                 |
+| **What**           | up to 8 recent turns of **your messages and the assistant's replies**, capped at 1,500 characters per turn and 4,500 total  |
+| **Never**          | `thinking` blocks, tool calls, tool output, or any session belonging to another repo                                        |
+| **Where it goes**  | into the one `pause` request, to the endpoint you configured — the same call the diff already goes to                       |
+| **What is stored** | provenance only: source, session id, turn count. **The turns are never written to disk.**                                   |
+| **Redaction**      | the same secret-stripping as the diff, applied to every turn — people paste keys into chat far more casually than into code |
+
+Turn it off for one pause with `--no-session`, or permanently:
+
+```sh
+export WHEREWASI_NO_SESSION=1
+```
+
+The first time a transcript is actually ingested, `pause` says so once, rather than leaving it to this file to be read.
+
+And the strongest form: point `WHEREWASI_BASE_URL` at a local model and your conversation never leaves the machine at all — see [zero network calls](#or-make-it-zero-network-calls).
+
+Claude Code only for now. No Cursor, no others.
+
+---
+
 ## Local-first. Read this part.
 
 Your code does not go anywhere. Concretely:
@@ -64,7 +108,7 @@ Your code does not go anywhere. Concretely:
 - **Nothing is ever written into your repo.** Not a dotfile, not a `.gitignore` entry. Storage lives in your home directory only.
 - **No server, no daemon, no telemetry, no account.** The binary runs and exits. Nothing is resident. If you opt into [automatic capture](#capturing-without-remembering-to), a `pause` is spawned detached by your git hook or shell and exits the same way — still no daemon, still nothing running between captures.
 - **Exactly one network call**, during `pause`, to whichever inference endpoint you configured. `resume` and `list` make none.
-- **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note and any piped output. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
+- **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note, any piped output, and every ingested session turn. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
 
 ### Or make it zero network calls
@@ -362,7 +406,7 @@ If it isn't `pause`, `resume`, or `list`, it isn't in here.
 
 ```sh
 pnpm install
-pnpm test        # 163 tests: capture, storage, redaction, formatting, hooks, both provider wire formats
+pnpm test        # 193 tests: capture, storage, redaction, formatting, hooks, transcripts, both provider wire formats
 pnpm build
 ```
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { fstatSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,7 +10,15 @@ import { captureState, findGitDir, findRepoRoot, parseSince } from "./capture.js
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
-import { hasAnySession, latestSession, listSessions, listTags, saveSession } from "./storage.js";
+import {
+  hasAnySession,
+  latestSession,
+  listSessions,
+  listTags,
+  rootDir,
+  saveSession,
+} from "./storage.js";
+import { findTranscript, toRef } from "./transcript.js";
 import {
   formatList,
   formatResume,
@@ -127,9 +136,30 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/**
+ * Reading someone's AI conversation is a bigger step than reading their diff,
+ * so it is stated once, the first time it actually happens, rather than buried
+ * in the README and hoped for.
+ */
+async function noticeOnce(home: string): Promise<boolean> {
+  const flag = path.join(rootDir(home), "session-notice-shown");
+  try {
+    await access(flag);
+    return false;
+  } catch {
+    try {
+      await mkdir(path.dirname(flag), { recursive: true });
+      await writeFile(flag, new Date().toISOString(), "utf8");
+    } catch {
+      // Cannot record it — better to re-notify than to silently never notify.
+    }
+    return true;
+  }
+}
+
 async function cmdPause(
   note: string | undefined,
-  opts: { since?: string; auto?: boolean; tag?: string },
+  opts: { since?: string; auto?: boolean; tag?: string; session?: boolean },
 ): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
@@ -200,6 +230,13 @@ async function cmdPause(
     input: state.input ? redact(state.input) : null,
   };
 
+  // Opt-out is checked before anything is read, not after.
+  const sessionsAllowed = opts.session !== false && !process.env["WHEREWASI_NO_SESSION"];
+  const transcript = sessionsAllowed ? await findTranscript(repoPath) : null;
+  const stateWithSession = transcript
+    ? { ...stored, transcript: toRef(transcript) }
+    : { ...stored };
+
   const selection = selectProvider(process.env);
   const hasKey = selection.provider !== null;
 
@@ -213,17 +250,38 @@ async function cmdPause(
     );
   }
 
-  const { analysis, error } = await analyze(stored, { provider: selection.provider });
-  const { session, file } = await saveSession(stored, {
+  const { analysis, error } = await analyze(stateWithSession, {
+    provider: selection.provider,
+    transcript,
+  });
+  const { session, file } = await saveSession(stateWithSession, {
     analysis,
     analysisError: error,
     trigger: opts.auto ? "auto" : "manual",
     ...(tag ? { tag } : {}),
   });
 
+  if (transcript && !opts.auto) {
+    if (await noticeOnce(homedir())) {
+      say(
+        `\n  ${paint("Note:", "bold")} ${paint("wherewasi read the last few turns of your Claude Code session for", "yellow")}\n` +
+          `  ${paint("this repo, to work from what you said rather than only from the diff.", "yellow")}\n` +
+          `  ${paint("Turn it off with --no-session, or permanently with WHEREWASI_NO_SESSION=1.", "yellow")}\n` +
+          `  ${paint("Point WHEREWASI_BASE_URL at a local model and it never leaves this machine.", "yellow")}\n`,
+      );
+    }
+  }
+
   const totalMs = Date.now() - started;
   if (opts.auto) {
     debug(`captured ${stored.recentFiles.length} file(s) on ${stored.git.branch || "no branch"}`);
+    debug(
+      transcript
+        ? `read ${transcript.turns} turn(s) from Claude Code session ${transcript.sessionId.slice(0, 8)}`
+        : sessionsAllowed
+          ? "no Claude Code session found for this repo"
+          : "session ingestion disabled",
+    );
     if (error) debug(`analysis failed: ${error}`);
     debug(`wrote ${file}`);
   }
@@ -440,10 +498,14 @@ program
     "scan files modified since 30m / 2h / 1d / an ISO timestamp (default: your last pause)",
   )
   .option("--tag <name>", "label this pause, to resume it by name later")
+  .option("--no-session", "do not read a Claude Code session for this repo")
   .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
   .action(
-    async (note: string | undefined, opts: { since?: string; auto?: boolean; tag?: string }) => {
+    async (
+      note: string | undefined,
+      opts: { since?: string; auto?: boolean; tag?: string; session?: boolean },
+    ) => {
       await cmdPause(note, opts);
     },
   );

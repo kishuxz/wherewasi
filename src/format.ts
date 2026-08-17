@@ -149,6 +149,7 @@ export function formatResume(
   const label = session.tag ? `${when} · ${branch} · ${session.tag}` : `${when} · ${branch}`;
   out.push("");
   out.push(`${paint("← where you were", "bold", "cyan")}  ${paint(label, "dim")}`);
+  if (session.analysis) out.push(paint(`  ${provenanceLine(session)}`, "dim"));
   out.push("");
 
   const a = session.analysis;
@@ -270,6 +271,18 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
   out.push("");
 
   return out;
+}
+
+/**
+ * States what the analysis was built from. A reconstruction from what you
+ * actually said and one inferred from the residue of your edits are different
+ * kinds of claim, and the reader is entitled to know which one they have.
+ */
+export function provenanceLine(session: Session): string {
+  const t = session.transcript;
+  if (!t) return "inferred from the diff";
+  const dropped = t.droppedTurns > 0 ? `, ${t.droppedTurns} older turn(s) not read` : "";
+  return `reconstructed from your Claude Code session — ${t.turns} turn(s)${dropped}`;
 }
 
 /**
