@@ -8,3 +8,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Evaluation output — real captured sessions, not for the repo.
+eval/out/

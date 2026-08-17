@@ -90,7 +90,20 @@ If you change anything the model sees — the system prompt, what `buildPrompt` 
 
 ## Evaluating a prompt change
 
-Prompt edits cannot be verified by unit tests. They are judged against four captured scenarios on five criteria: does `summary` name the problem rather than restate the diff, is `hypothesis` specific and falsifiable, is `ruled_out` backed by evidence of an abandoned attempt, does `working_set` give a reason per file, is a blocker named where one exists.
+Prompt edits cannot be verified by unit tests. Run the harness:
+
+```sh
+export GROQ_API_KEY=...
+eval/run.sh          # writes raw session JSON to eval/out/, then prints the pairs
+```
+
+It builds the scenario — a half-finished `evaluate` → `evaluateRun` rename with `guard` missed, a debug print, a stub that only bumps a timestamp, and a failing suite — and runs each of four variants **twice against identical repo state**: once with a Claude Code session available, once with `--no-session`. The only difference within a pair is the transcript.
+
+Judged on five criteria: does `summary` name the problem rather than restate the diff, is `hypothesis` specific and falsifiable, is `ruled_out` backed by evidence of an abandoned attempt, does `working_set` give a reason per file, is a blocker named where one exists.
+
+`eval/score.py` prints the pairs side by side but deliberately does **not** score them — four of the five criteria are judgements, and a script that scored them would be measuring keyword matching. It checks only the one mechanical signal: the synthesised session contains two abandoned attempts (a DNS/sink-URL check, and an HTTP timeout that was tried and reverted) that appear **nowhere in the diff**, so only a run that read the session can cite them in `ruled_out`.
+
+Two things about the free tier that will otherwise waste your time: it caps **8,000 tokens per minute** and **200,000 per day**. One scenario costs ~5,000, so the harness paces itself; the daily cap you cannot pace around.
 
 Two rules learned the hard way:
 
