@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kishuxz/wherewasi/actions/workflows/ci.yml/badge.svg)](https://github.com/kishuxz/wherewasi/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/wherewasi)](https://www.npmjs.com/package/wherewasi)
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kishuxz/wherewasi/blob/main/LICENSE)
 
 Returning to a task after an interruption costs about 23 minutes for knowledge workers, and more for developers, because what you lose isn't your place in a file — it's a mental model of the code, the data flow, and the hypothesis you were testing. Every other tool saves your files and your tabs; none of them save _why_ those files were open or what you'd already ruled out. `wherewasi` captures that reasoning state before you walk away and hands it back when you return.
 
@@ -64,7 +64,7 @@ Your code does not go anywhere. Concretely:
 - **Nothing is ever written into your repo.** Not a dotfile, not a `.gitignore` entry. Storage lives in your home directory only.
 - **No server, no daemon, no telemetry, no account, no background process.** The binary runs when you type it and exits.
 - **Exactly one network call**, during `pause`, to whichever inference endpoint you configured. `resume` and `list` make none.
-- **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note and any piped output. ([Tests](test/redact.test.ts).)
+- **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note and any piped output. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
 
 ### Or make it zero network calls
@@ -165,23 +165,32 @@ Recent pauses for this repo: when, branch, first line of the summary.
 
 ## Known limits
 
-Measured, not hypothetical. Each has an open issue.
+Measured, not hypothetical. Each links the open issue tracking it.
 
 ### Blocked-build detection depends on piping something in
 
-`working_set` flags files that block your next step — a package that fails to compile, the source of a failing test — even when they have nothing to do with your hypothesis. That detection works off the output you pipe in. Run `wherewasi pause` with no piped command output and a broken build in a file you didn't touch will not be mentioned, because nothing in the diff reveals it. Pipe your test command in and it will. ([#24](../../issues/24))
+`working_set` flags files that block your next step — a package that fails to compile, the source of a failing test — even when they have nothing to do with your hypothesis. That detection works off the output you pipe in. Run `wherewasi pause` with no piped command output and a broken build in a file you didn't touch will not be mentioned, because nothing in the diff reveals it. Pipe your test command in and it will. ([#42](https://github.com/kishuxz/wherewasi/issues/42))
 
-### Large diffs silently shrink the working set
+### Large diffs shrink the working set — but they now say so
 
-Diffs are capped at 8000 characters each. On a large diff, hunks past the cut are invisible to the model, and `working_set` narrows accordingly — in testing, from 4 entries to 2. Inference quality held; _coverage_ dropped. Nothing in the output tells you the view was partial. ([#25](../../issues/25))
+Diffs are capped at 8000 characters each. On a large diff, hunks past the cut are invisible to the model, and `working_set` narrows accordingly — in testing, from 4 entries to 2. Inference quality held; _coverage_ dropped.
+
+This used to be silent, which was the dangerous part. `resume` now says so directly:
+
+```
+  ⚠ The unstaged diff was truncated at 8000 chars — anything past the cut
+  was not analysed, so this working set may be incomplete.
+```
+
+The coverage loss itself is still real — the warning tells you to go look, it doesn't recover the hunks. ([#25](https://github.com/kishuxz/wherewasi/issues/25))
 
 ### The free-tier request ceiling is real
 
-A big diff plus piped test output can exceed a hosted free tier's per-request token cap and return **HTTP 413**, which — unlike a 429 — retrying never clears. `pause` degrades to storing raw state and says so. If you hit it often, use an endpoint with a larger cap. Prompt length competes with your diff for the same budget, which is why the system prompt is kept tight. ([#25](../../issues/25))
+A big diff plus piped test output can exceed a hosted free tier's per-request token cap and return **HTTP 413**, which — unlike a 429 — retrying never clears. `pause` degrades to storing raw state and says so. If you hit it often, use an endpoint with a larger cap. Prompt length competes with your diff for the same budget, which is why the system prompt is kept tight. ([#25](https://github.com/kishuxz/wherewasi/issues/25))
 
 ### Below roughly 70B parameters, output degrades
 
-Same prompt, same repo, an 8B model returned bare filenames with no reasons and a vague next step, plus a hypothesis that was confidently wrong. Structurally valid, substantively useless — and nothing fails, so a bad session looks exactly like a good one. Use a larger model where you can. ([#26](../../issues/26))
+Same prompt, same repo, an 8B model returned bare filenames with no reasons and a vague next step, plus a hypothesis that was confidently wrong. Structurally valid, substantively useless — and nothing fails, so a bad session looks exactly like a good one. Use a larger model where you can. ([#26](https://github.com/kishuxz/wherewasi/issues/26))
 
 ---
 
@@ -198,7 +207,7 @@ Both byte-identical to the prompt's own examples. It looked like the best output
 
 It was caught by a model-tier sweep run for an unrelated reason, and confirmed by string-matching the output against the prompt source rather than by reading it, because reading it produced admiration rather than suspicion.
 
-Two changes followed. Examples are now drawn from an **unrelated imaginary project** — a PDF exporter — so copying them produces something obviously absurd in a real repository instead of something plausibly right. And output is now checked against the prompt at runtime: an analysis reproducing an example verbatim is rejected with a message naming the model, rather than stored. ([Test](test/analyze.test.ts).)
+Two changes followed. Examples are now drawn from an **unrelated imaginary project** — a PDF exporter — so copying them produces something obviously absurd in a real repository instead of something plausibly right. And output is now checked against the prompt at runtime: an analysis reproducing an example verbatim is rejected with a message naming the model, rather than stored. ([Test](https://github.com/kishuxz/wherewasi/blob/main/test/analyze.test.ts).)
 
 The general lesson is worth stating plainly, because it is easy to repeat: **few-shot examples drawn from your evaluation scenario make weak models look strong on that scenario and only that scenario.** If your examples resemble your test case, your evaluation is measuring recall, not reasoning.
 
