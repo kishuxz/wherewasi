@@ -33,6 +33,15 @@ export interface RecencyWindow {
   bulkCount: number;
 }
 
+/** Provenance of an ingested agent session. Never the turns themselves. */
+export interface TranscriptRef {
+  source: "claude-code";
+  sessionId: string;
+  turns: number;
+  /** turns that existed but were dropped to fit the prompt budget */
+  droppedTurns: number;
+}
+
 export interface CapturedState {
   /** absolute path used as the storage identity for this repo */
   repoPath: string;
@@ -43,6 +52,12 @@ export interface CapturedState {
   note: string | null;
   /** piped stdin, if any */
   input: string | null;
+  /**
+   * Set when an agent session was read for this pause. Provenance only — the
+   * turns are deliberately not persisted, so a session file never becomes a
+   * durable copy of a conversation.
+   */
+  transcript?: TranscriptRef;
 }
 
 export interface Analysis {

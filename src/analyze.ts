@@ -1,6 +1,7 @@
 import { redact } from "./redact.js";
 import { ProviderError, selectProvider } from "./providers/index.js";
 import type { Provider, ProviderEnv } from "./providers/index.js";
+import type { Transcript } from "./transcript.js";
 import type { Analysis, CapturedState } from "./types.js";
 
 /**
@@ -10,6 +11,8 @@ import type { Analysis, CapturedState } from "./types.js";
 const MAX_TOKENS = 2500;
 
 const SYSTEM = `You are writing a note to a developer who was interrupted an hour ago and has just sat back down. They can already see their diff. Supply the one thing it cannot: the problem they were solving.
+
+If an <agent_session> is present it OUTRANKS every other section. It is the developer stating their intent in their own words; the diff is only the residue those intentions left. Where the two disagree, the session is right and the diff is stale. Never contradict an explicitly stated goal because the edits look like something else.
 
 THE DIFF IS EVIDENCE, NOT THE SUBJECT. Edits are footprints; describe where the person was walking, not the shape of the prints. If a sentence would still be true having read only the diff and understood nothing of the problem, delete it.
 
@@ -51,9 +54,17 @@ function section(title: string, body: string): string {
 }
 
 /** Builds the user-turn prompt. Everything here is redacted already. */
-export function buildPrompt(state: CapturedState): string {
+export function buildPrompt(state: CapturedState, transcript?: Transcript | null): string {
   const g = state.git;
   let out = "";
+
+  // First, because it is the strongest evidence in the payload.
+  if (transcript?.content.length) {
+    const body = transcript.content
+      .map((t) => `${t.role === "user" ? "DEVELOPER" : "ASSISTANT"}: ${redact(t.text)}`)
+      .join("\n\n");
+    out += section("agent_session", body);
+  }
 
   if (state.note) out += section("developer_note", redact(state.note));
   if (state.input) out += section("captured_command_output", redact(state.input));
@@ -72,15 +83,23 @@ export function buildPrompt(state: CapturedState): string {
   // Bulk-written files are the low-signal ones by definition, so a handful
   // plus a count conveys the same context at a fraction of the token cost —
   // which matters because prompt length competes with the diff for one budget.
-  const BULK_SAMPLE = 5;
-  const individual = state.recentFiles.filter((f) => !f.bulk);
+  // The payload already sits near the free-tier ceiling, so transcript content
+  // has to displace rather than stack. Bulk-written files are the lowest-signal
+  // thing here by construction, so they go first, and the individual list is
+  // capped hard — both cheaper than dropping a turn the developer wrote.
+  const hasSession = Boolean(transcript?.content.length);
+  const BULK_SAMPLE = hasSession ? 0 : 5;
+  const INDIVIDUAL_LIMIT = hasSession ? 12 : state.recentFiles.length;
+  const individual = state.recentFiles.filter((f) => !f.bulk).slice(0, INDIVIDUAL_LIMIT);
   const bulk = state.recentFiles.filter((f) => f.bulk);
 
   const render = (f: (typeof state.recentFiles)[number]) =>
     `${f.path}\t${f.mtime}\t[${f.inGit ? "git-changed" : "mtime-only"}]`;
 
   const lines = individual.map(render);
-  if (bulk.length) {
+  if (bulk.length && BULK_SAMPLE === 0) {
+    lines.push(`… and ${bulk.length} more files from a bulk edit, omitted`);
+  } else if (bulk.length) {
     lines.push(...bulk.slice(0, BULK_SAMPLE).map((f) => `${render(f)} [bulk-edit]`));
     if (bulk.length > BULK_SAMPLE) {
       lines.push(`… and ${bulk.length - BULK_SAMPLE} more files from the same bulk edit`);
@@ -89,7 +108,7 @@ export function buildPrompt(state: CapturedState): string {
 
   out += section("recently_touched_files", lines.length ? lines.join("\n") : "(none)");
 
-  if (bulk.length) {
+  if (bulk.length && BULK_SAMPLE > 0) {
     out += section(
       "reading_the_file_list",
       "Files tagged bulk-edit were written together in seconds — a codemod, a formatter, or an agent — so they show attention far less reliably than files touched individually. Weight them below the rest. Files tagged git-changed are the strongest signal; mtime-only files may just have been read or rebuilt.",
@@ -165,6 +184,8 @@ export interface AnalyzeOptions {
   /** Inject a provider directly; otherwise one is selected from env. */
   provider?: Provider | null;
   env?: ProviderEnv;
+  /** Agent session for this repo, weighted above the diff when present. */
+  transcript?: Transcript | null;
 }
 
 /**
@@ -188,7 +209,7 @@ export async function analyze(
   try {
     const result = await provider.complete({
       system: SYSTEM,
-      user: buildPrompt(state),
+      user: buildPrompt(state, opts.transcript ?? null),
       maxTokens: MAX_TOKENS,
     });
     const analysis = parseAnalysis(result.text);

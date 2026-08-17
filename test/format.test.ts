@@ -3,6 +3,7 @@ import {
   formatList,
   formatResume,
   keylessGuidance,
+  provenanceLine,
   relativeTime,
   splitWorkingSetEntry,
   truncationNotice,
@@ -332,5 +333,39 @@ describe("tags in output", () => {
 
   it("omits the TAG column entirely when nothing is tagged", () => {
     expect(formatList([base], opts)).not.toContain("TAG");
+  });
+});
+
+describe("provenance", () => {
+  const withSession: Session = {
+    ...base,
+    transcript: { source: "claude-code", sessionId: "abc12345", turns: 6, droppedTurns: 0 },
+  };
+
+  it("says when the analysis came from an agent session", () => {
+    expect(provenanceLine(withSession)).toBe(
+      "reconstructed from your Claude Code session — 6 turn(s)",
+    );
+    expect(formatResume(withSession, opts)).toContain(
+      "reconstructed from your Claude Code session",
+    );
+  });
+
+  it("says when it was only the diff", () => {
+    expect(provenanceLine(base)).toBe("inferred from the diff");
+    expect(formatResume(base, opts)).toContain("inferred from the diff");
+  });
+
+  it("admits when older turns were dropped for budget", () => {
+    const trimmed = {
+      ...withSession,
+      transcript: { ...withSession.transcript!, droppedTurns: 14 },
+    };
+    expect(provenanceLine(trimmed)).toContain("14 older turn(s) not read");
+  });
+
+  it("stays quiet on raw-state sessions, which have no analysis to qualify", () => {
+    const raw = { ...withSession, analysis: null };
+    expect(formatResume(raw, opts)).not.toContain("reconstructed from");
   });
 });
