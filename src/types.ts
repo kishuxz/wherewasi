@@ -38,6 +38,8 @@ export interface TranscriptRef {
   source: "claude-code";
   sessionId: string;
   turns: number;
+  /** how many of those turns are assistant reasoning */
+  thinkingTurns: number;
   /** turns that existed but were dropped to fit the prompt budget */
   droppedTurns: number;
 }

@@ -86,11 +86,17 @@ Reading an AI conversation is a bigger step than reading a diff, so here is all 
 | **What is stored** | provenance only: source, session id, turn count. **The turns are never written to disk.**                                   |
 | **Redaction**      | the same secret-stripping as the diff, applied to every turn — people paste keys into chat far more casually than into code |
 
-Turn it off for one pause with `--no-session`, or permanently:
+Two separate switches, because "read my session" and "read the model's reasoning" are different questions:
 
 ```sh
+wherewasi pause --no-thinking     # read the session, leave the reasoning out
+wherewasi pause --no-session      # read nothing
+
+export WHEREWASI_NO_THINKING=1    # persist either one
 export WHEREWASI_NO_SESSION=1
 ```
+
+`--no-thinking` gives the whole budget back to speech rather than leaving a hole in it.
 
 The first time a transcript is actually ingested, `pause` says so once, rather than leaving it to this file to be read.
 
@@ -439,7 +445,7 @@ If it isn’t `pause`, `resume`, `list` or `status`, it isn’t in here.
 
 ```sh
 pnpm install
-pnpm test        # 211 tests: capture, storage, redaction, formatting, hooks, transcripts, status, both provider wire formats
+pnpm test        # 218 tests: capture, storage, redaction, formatting, hooks, transcripts, status, both provider wire formats
 pnpm build
 ```
 
