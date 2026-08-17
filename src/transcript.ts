@@ -21,8 +21,17 @@ export const PROJECTS_DIR = path.join(".claude", "projects");
 export const MAX_TURNS = 8;
 /** Per turn. Median turn is ~100 chars; one measured turn was 847,636. */
 export const TURN_CHAR_LIMIT = 1500;
-/** All turns together, ~1,125 tokens. Sized against the free-tier ceiling. */
-export const TOTAL_CHAR_LIMIT = 4500;
+/**
+ * Per reasoning entry. Reasoning is verbose and highly variable — one measured
+ * window held 35 entries — so it is capped tighter than speech.
+ */
+export const THINKING_CHAR_LIMIT = 600;
+/**
+ * All turns together, ~1,375 tokens. With reasoning capped at 600 the median
+ * window is 4,722 chars, so a typical session keeps all of its reasoning and
+ * only the long tail gets trimmed.
+ */
+export const TOTAL_CHAR_LIMIT = 5500;
 /**
  * Below this a user turn is an acknowledgement rather than an instruction.
  * Median turn across measured transcripts is ~100 chars; real instructions run
@@ -32,6 +41,12 @@ export const SUBSTANTIVE_TURN_CHARS = 200;
 
 export interface TranscriptTurn {
   role: "user" | "assistant";
+  /**
+   * `thinking` is the assistant's reasoning. It is included because that is
+   * where the *why* lives, and it is the first thing dropped when the budget
+   * bites — sacrificed under pressure rather than omitted by default.
+   */
+  kind: "text" | "thinking";
   text: string;
   truncated: boolean;
 }
@@ -64,20 +79,32 @@ interface RawRecord {
   message?: { role?: string; content?: unknown };
 }
 
-function textOf(content: unknown): string {
-  // A user turn is a plain string. Tool results arrive as user records whose
-  // content is an array of tool_result blocks — taking only `text` blocks
-  // drops those to empty, which is what we want.
-  if (typeof content === "string") return content.trim();
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((b): b is { type: string; text?: string } => {
-      const t = (b as { type?: unknown })?.type;
-      return t === "text";
-    })
-    .map((b) => b.text ?? "")
-    .join("\n")
-    .trim();
+type Block = { type?: string; text?: string; thinking?: string };
+
+/**
+ * Splits one record into ordered entries.
+ *
+ * A user turn is a plain string. Tool results arrive as user records whose
+ * content is an array of tool_result blocks — keeping only text and thinking
+ * drops those, which is what we want. Content order is preserved so reasoning
+ * stays next to the reply it produced.
+ */
+function entriesOf(role: "user" | "assistant", content: unknown): TranscriptTurn[] {
+  if (typeof content === "string") {
+    const text = content.trim();
+    return text ? [{ role, kind: "text", text, truncated: false }] : [];
+  }
+  if (!Array.isArray(content)) return [];
+
+  const out: TranscriptTurn[] = [];
+  for (const block of content as Block[]) {
+    if (block?.type === "text" && block.text?.trim()) {
+      out.push({ role, kind: "text", text: block.text.trim(), truncated: false });
+    } else if (block?.type === "thinking" && block.thinking?.trim()) {
+      out.push({ role, kind: "thinking", text: block.thinking.trim(), truncated: false });
+    }
+  }
+  return out;
 }
 
 /**
@@ -118,9 +145,7 @@ export function parseTranscript(
       continue;
     }
 
-    const text = textOf(record.message?.content);
-    if (!text) continue;
-    turns.push({ role: record.type, text, truncated: false });
+    turns.push(...entriesOf(record.type, record.message?.content));
   }
 
   return { turns, sessionId, branch, cwd };
@@ -148,47 +173,63 @@ function clip(text: string, limit: number): { text: string; truncated: boolean }
  */
 export function selectTurns(
   turns: TranscriptTurn[],
-  opts: { maxTurns?: number; perTurn?: number; total?: number } = {},
+  opts: { maxTurns?: number; perTurn?: number; perThinking?: number; total?: number } = {},
 ): { turns: TranscriptTurn[]; dropped: number } {
   const maxTurns = opts.maxTurns ?? MAX_TURNS;
   const perTurn = opts.perTurn ?? TURN_CHAR_LIMIT;
+  const perThinking = opts.perThinking ?? THINKING_CHAR_LIMIT;
   const total = opts.total ?? TOTAL_CHAR_LIMIT;
 
-  const window = turns.slice(-maxTurns);
-  const older = turns.slice(0, Math.max(0, turns.length - window.length));
+  // The window is counted in spoken turns, not entries. Reasoning interleaved
+  // with them rides along rather than consuming slots — otherwise a verbose
+  // session would push out the conversation the window is meant to hold.
+  const spokenAt = turns.map((t, i) => (t.kind === "text" ? i : -1)).filter((i) => i >= 0);
+  const start = spokenAt.length > maxTurns ? spokenAt[spokenAt.length - maxTurns]! : 0;
 
-  // Back-fill the developer's own words when the window is all assistant text.
-  if (!window.some((t) => t.role === "user")) {
-    const lastUser = [...older].reverse().find((t) => t.role === "user");
+  const window = turns.slice(start);
+  const older = turns.slice(0, start);
+  const spokenIn = window.filter((t) => t.kind === "text" && t.role === "user");
+
+  // Back-fill the developer's own words when the window is all assistant.
+  if (!spokenIn.length) {
+    const lastUser = [...older].reverse().find((t) => t.kind === "text" && t.role === "user");
     if (lastUser) window.unshift(lastUser);
   }
 
   // A trailing "go" or "yes" is a continuation, not a statement of intent — the
   // instruction it approves is further back. Observed live: the newest user
   // turn was literally "go" while the actual task sat several turns earlier.
-  const inWindow = window.filter((t) => t.role === "user");
-  if (inWindow.length && inWindow.every((t) => t.text.length < SUBSTANTIVE_TURN_CHARS)) {
+  const present = window.filter((t) => t.kind === "text" && t.role === "user");
+  if (present.length && present.every((t) => t.text.length < SUBSTANTIVE_TURN_CHARS)) {
     const substantive = [...older]
       .reverse()
-      .find((t) => t.role === "user" && t.text.length >= SUBSTANTIVE_TURN_CHARS);
+      .find(
+        (t) => t.kind === "text" && t.role === "user" && t.text.length >= SUBSTANTIVE_TURN_CHARS,
+      );
     if (substantive) window.unshift(substantive);
   }
 
   const clipped = window.map((t) => {
-    const { text, truncated } = clip(t.text, perTurn);
-    return { role: t.role, text, truncated };
+    const limit = t.kind === "thinking" ? perThinking : perTurn;
+    const { text, truncated } = clip(t.text, limit);
+    return { role: t.role, kind: t.kind, text, truncated };
   });
 
-  // Drop oldest first until the whole thing fits.
-  let used = clipped.reduce((n, t) => n + t.text.length, 0);
-  let start = 0;
-  while (start < clipped.length - 1 && used > total) {
-    used -= clipped[start]!.text.length;
-    start++;
+  const size = (list: TranscriptTurn[]) => list.reduce((n, t) => n + t.text.length, 0);
+
+  // Reasoning is sacrificed first, oldest first, and only then whole turns.
+  // Dropping a sentence the developer wrote to keep a paragraph the model
+  // thought would be the wrong trade.
+  let kept = clipped;
+  while (size(kept) > total && kept.some((t) => t.kind === "thinking")) {
+    const oldest = kept.findIndex((t) => t.kind === "thinking");
+    kept = [...kept.slice(0, oldest), ...kept.slice(oldest + 1)];
+  }
+  while (kept.length > 1 && size(kept) > total) {
+    kept = kept.slice(1);
   }
 
-  const kept = clipped.slice(start);
-  return { turns: kept, dropped: turns.length - kept.length };
+  return { turns: kept, dropped: Math.max(0, turns.length - kept.length) };
 }
 
 async function newestSessionFile(dir: string): Promise<string | null> {
@@ -225,7 +266,7 @@ async function newestSessionFile(dir: string): Promise<string | null> {
  */
 export async function findTranscript(
   repoPath: string,
-  opts: { home?: string } = {},
+  opts: { home?: string; thinking?: boolean } = {},
 ): Promise<Transcript | null> {
   const dir = path.join(projectsRoot(opts.home ?? homedir()), encodeProjectDir(repoPath));
   const file = await newestSessionFile(dir);
@@ -239,19 +280,24 @@ export async function findTranscript(
   }
 
   const parsed = parseTranscript(raw, { repoPath });
+  // Dropped before selection, so disabling reasoning gives the whole budget
+  // back to speech rather than leaving a hole in it.
+  const usable =
+    opts.thinking === false ? parsed.turns.filter((t) => t.kind !== "thinking") : parsed.turns;
 
   // The directory name is lossy, so confirm against the cwd the records carry.
   // Without this, two repos whose paths differ only by a hyphen collide.
   if (parsed.cwd && path.resolve(parsed.cwd) !== path.resolve(repoPath)) return null;
-  if (!parsed.turns.length) return null;
+  if (!usable.length) return null;
 
-  const { turns, dropped } = selectTurns(parsed.turns);
+  const { turns, dropped } = selectTurns(usable);
   return {
     source: "claude-code",
     sessionId: parsed.sessionId,
     file,
     branch: parsed.branch,
     turns: turns.length,
+    thinkingTurns: turns.filter((t) => t.kind === "thinking").length,
     droppedTurns: Math.max(0, dropped),
     content: turns,
   };
@@ -263,6 +309,7 @@ export function toRef(transcript: Transcript): TranscriptRef {
     source: transcript.source,
     sessionId: transcript.sessionId,
     turns: transcript.turns,
+    thinkingTurns: transcript.thinkingTurns,
     droppedTurns: transcript.droppedTurns,
   };
 }

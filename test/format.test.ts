@@ -339,7 +339,13 @@ describe("tags in output", () => {
 describe("provenance", () => {
   const withSession: Session = {
     ...base,
-    transcript: { source: "claude-code", sessionId: "abc12345", turns: 6, droppedTurns: 0 },
+    transcript: {
+      source: "claude-code",
+      sessionId: "abc12345",
+      turns: 6,
+      thinkingTurns: 0,
+      droppedTurns: 0,
+    },
   };
 
   it("says when the analysis came from an agent session", () => {

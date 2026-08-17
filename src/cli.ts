@@ -163,7 +163,7 @@ async function noticeOnce(home: string): Promise<boolean> {
 
 async function cmdPause(
   note: string | undefined,
-  opts: { since?: string; auto?: boolean; tag?: string; session?: boolean },
+  opts: { since?: string; auto?: boolean; tag?: string; session?: boolean; thinking?: boolean },
 ): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
@@ -236,7 +236,11 @@ async function cmdPause(
 
   // Opt-out is checked before anything is read, not after.
   const sessionsAllowed = opts.session !== false && !process.env["WHEREWASI_NO_SESSION"];
-  const transcript = sessionsAllowed ? await findTranscript(repoPath) : null;
+  // Separate switch: reasoning can be declined without giving up the session.
+  const thinkingAllowed = opts.thinking !== false && !process.env["WHEREWASI_NO_THINKING"];
+  const transcript = sessionsAllowed
+    ? await findTranscript(repoPath, { thinking: thinkingAllowed })
+    : null;
   const stateWithSession = transcript
     ? { ...stored, transcript: toRef(transcript) }
     : { ...stored };
@@ -270,7 +274,8 @@ async function cmdPause(
       say(
         `\n  ${paint("Note:", "bold")} ${paint("wherewasi read the last few turns of your Claude Code session for", "yellow")}\n` +
           `  ${paint("this repo, to work from what you said rather than only from the diff.", "yellow")}\n` +
-          `  ${paint("Turn it off with --no-session, or permanently with WHEREWASI_NO_SESSION=1.", "yellow")}\n` +
+          `  ${paint("That includes the assistant's reasoning. Leave that out with --no-thinking,", "yellow")}\n` +
+          `  ${paint("or turn the whole thing off with --no-session (WHEREWASI_NO_SESSION=1 to persist).", "yellow")}\n` +
           `  ${paint("Point WHEREWASI_BASE_URL at a local model and it never leaves this machine.", "yellow")}\n`,
       );
     }
@@ -281,7 +286,7 @@ async function cmdPause(
     debug(`captured ${stored.recentFiles.length} file(s) on ${stored.git.branch || "no branch"}`);
     debug(
       transcript
-        ? `read ${transcript.turns} turn(s) from Claude Code session ${transcript.sessionId.slice(0, 8)}`
+        ? `read ${transcript.turns} turn(s) (${transcript.thinkingTurns} reasoning) from Claude Code session ${transcript.sessionId.slice(0, 8)}`
         : sessionsAllowed
           ? "no Claude Code session found for this repo"
           : "session ingestion disabled",
@@ -583,12 +588,19 @@ program
   )
   .option("--tag <name>", "label this pause, to resume it by name later")
   .option("--no-session", "do not read a Claude Code session for this repo")
+  .option("--no-thinking", "read the session but leave out the assistant's reasoning")
   .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
   .action(
     async (
       note: string | undefined,
-      opts: { since?: string; auto?: boolean; tag?: string; session?: boolean },
+      opts: {
+        since?: string;
+        auto?: boolean;
+        tag?: string;
+        session?: boolean;
+        thinking?: boolean;
+      },
     ) => {
       await cmdPause(note, opts);
     },

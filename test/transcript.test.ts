@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   MAX_TURNS,
+  THINKING_CHAR_LIMIT,
   TOTAL_CHAR_LIMIT,
   TURN_CHAR_LIMIT,
   encodeProjectDir,
@@ -73,7 +74,9 @@ describe("parseTranscript", () => {
     expect(turns[0]!.text).toBe("why is this failing");
   });
 
-  it("drops thinking blocks", () => {
+  it("keeps thinking as its own entry, in content order", () => {
+    // Reasoning is where the *why* lives, so it is carried rather than
+    // dropped — and kept separate so the budget can sacrifice it first.
     const raw = rec({
       type: "assistant",
       message: {
@@ -85,9 +88,25 @@ describe("parseTranscript", () => {
       },
     });
     const { turns } = parseTranscript(raw);
+    expect(turns.map((t) => t.kind)).toEqual(["thinking", "text"]);
+    expect(turns[0]!.text).toBe("the user probably means the collector");
+    expect(turns[1]!.text).toBe("Checking the collector.");
+  });
+
+  it("keeps a reasoning-only record, which has no reply to attach to", () => {
+    const raw = rec({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "checking whether guard still imports evaluate" },
+          { type: "tool_use", input: { cmd: "grep evaluate" } },
+        ],
+      },
+    });
+    const { turns } = parseTranscript(raw);
     expect(turns).toHaveLength(1);
-    expect(turns[0]!.text).toBe("Checking the collector.");
-    expect(turns[0]!.text).not.toContain("probably means");
+    expect(turns[0]!.kind).toBe("thinking");
   });
 
   it("ignores subagent sidechains", () => {
@@ -136,6 +155,7 @@ describe("selectTurns", () => {
   const many = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
       role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      kind: "text" as const,
       text: `turn ${i}`,
       truncated: false,
     }));
@@ -147,7 +167,9 @@ describe("selectTurns", () => {
   });
 
   it("clips a turn that is far too long", () => {
-    const huge = [{ role: "user" as const, text: "x".repeat(900_000), truncated: false }];
+    const huge = [
+      { role: "user" as const, kind: "text" as const, text: "x".repeat(900_000), truncated: false },
+    ];
     const { turns } = selectTurns(huge);
     expect(turns[0]!.text.length).toBeLessThanOrEqual(TURN_CHAR_LIMIT + 1);
     expect(turns[0]!.truncated).toBe(true);
@@ -156,6 +178,7 @@ describe("selectTurns", () => {
   it("stays inside the total budget", () => {
     const fat = Array.from({ length: 8 }, () => ({
       role: "assistant" as const,
+      kind: "text" as const,
       text: "y".repeat(TURN_CHAR_LIMIT),
       truncated: false,
     }));
@@ -169,13 +192,14 @@ describe("selectTurns", () => {
     // task sat several turns earlier and was the only thing worth reading.
     const instruction = "Ingest agent session transcripts. ".repeat(10);
     const turns = [
-      { role: "user" as const, text: instruction, truncated: false },
+      { role: "user" as const, kind: "text" as const, text: instruction, truncated: false },
       ...Array.from({ length: 8 }, () => ({
         role: "assistant" as const,
+        kind: "text" as const,
         text: "working on it",
         truncated: false,
       })),
-      { role: "user" as const, text: "go", truncated: false },
+      { role: "user" as const, kind: "text" as const, text: "go", truncated: false },
     ];
     const { turns: kept } = selectTurns(turns);
     const users = kept.filter((t) => t.role === "user").map((t) => t.text);
@@ -185,9 +209,19 @@ describe("selectTurns", () => {
 
   it("does not reach back when the window already has a real instruction", () => {
     const turns = [
-      { role: "user" as const, text: "an old instruction ".repeat(20), truncated: false },
-      { role: "user" as const, text: "a current instruction ".repeat(20), truncated: false },
-      { role: "assistant" as const, text: "ok", truncated: false },
+      {
+        role: "user" as const,
+        kind: "text" as const,
+        text: "an old instruction ".repeat(20),
+        truncated: false,
+      },
+      {
+        role: "user" as const,
+        kind: "text" as const,
+        text: "a current instruction ".repeat(20),
+        truncated: false,
+      },
+      { role: "assistant" as const, kind: "text" as const, text: "ok", truncated: false },
     ];
     const { turns: kept } = selectTurns(turns);
     expect(kept.filter((t) => t.role === "user")).toHaveLength(2);
@@ -197,9 +231,15 @@ describe("selectTurns", () => {
     // Real user messages are rare in a tool-heavy session — one measured
     // transcript had 7 among 295 user records — and state intent most directly.
     const turns = [
-      { role: "user" as const, text: "the refresh never fires", truncated: false },
+      {
+        role: "user" as const,
+        kind: "text" as const,
+        text: "the refresh never fires",
+        truncated: false,
+      },
       ...Array.from({ length: 20 }, () => ({
         role: "assistant" as const,
+        kind: "text" as const,
         text: "working on it",
         truncated: false,
       })),
@@ -207,6 +247,78 @@ describe("selectTurns", () => {
     const { turns: kept } = selectTurns(turns);
     expect(kept.some((t) => t.role === "user")).toBe(true);
     expect(kept[0]!.text).toBe("the refresh never fires");
+  });
+});
+
+describe("reasoning is sacrificed first", () => {
+  const T = (
+    kind: "text" | "thinking",
+    text: string,
+    role: "user" | "assistant" = "assistant",
+  ) => ({
+    role,
+    kind,
+    text,
+    truncated: false,
+  });
+
+  it("drops reasoning before any spoken turn", () => {
+    const turns = [
+      T("text", "u".repeat(1400), "user"),
+      T("thinking", "r".repeat(600)),
+      T("text", "a".repeat(1400)),
+      T("thinking", "r".repeat(600)),
+      T("text", "b".repeat(1400)),
+      T("thinking", "r".repeat(600)),
+    ];
+    const { turns: kept } = selectTurns(turns, { total: 4200 });
+    // All three spoken turns survive; reasoning absorbs the whole cut.
+    expect(kept.filter((t) => t.kind === "text")).toHaveLength(3);
+    expect(kept.filter((t) => t.kind === "thinking").length).toBeLessThan(3);
+  });
+
+  it("drops the oldest reasoning first", () => {
+    const turns = [
+      T("thinking", "oldest-reasoning"),
+      T("text", "x".repeat(1400), "user"),
+      T("thinking", "newest-reasoning"),
+    ];
+    // 1400 + 16 + 16 = 1432; a 1420 budget forces exactly one reasoning cut.
+    const { turns: kept } = selectTurns(turns, { total: 1420 });
+    const reasoning = kept.filter((t) => t.kind === "thinking").map((t) => t.text);
+    expect(reasoning).toEqual(["newest-reasoning"]);
+  });
+
+  it("only cuts spoken turns once no reasoning is left to give", () => {
+    const turns = [
+      T("text", "x".repeat(1400), "user"),
+      T("text", "y".repeat(1400)),
+      T("text", "z".repeat(1400)),
+    ];
+    const { turns: kept } = selectTurns(turns, { total: 2000 });
+    expect(kept.length).toBeLessThan(3);
+    expect(kept.at(-1)!.text.startsWith("z")).toBe(true);
+  });
+
+  it("caps reasoning tighter than speech", () => {
+    const { turns: kept } = selectTurns([
+      T("text", "s".repeat(5000), "user"),
+      T("thinking", "r".repeat(5000)),
+    ]);
+    const spoken = kept.find((t) => t.kind === "text")!;
+    const reasoning = kept.find((t) => t.kind === "thinking");
+    expect(spoken.text.length).toBeGreaterThan(THINKING_CHAR_LIMIT);
+    if (reasoning) expect(reasoning.text.length).toBeLessThanOrEqual(THINKING_CHAR_LIMIT + 1);
+  });
+
+  it("does not let reasoning consume window slots meant for conversation", () => {
+    // 8 spoken turns with reasoning interleaved must still yield 8 spoken.
+    const turns = Array.from({ length: 10 }, (_, i) => [
+      T("thinking", `reasoning ${i}`),
+      T("text", `spoken ${i}`, i % 2 === 0 ? "user" : "assistant"),
+    ]).flat();
+    const { turns: kept } = selectTurns(turns, { total: 100_000 });
+    expect(kept.filter((t) => t.kind === "text")).toHaveLength(MAX_TURNS);
   });
 });
 
@@ -254,6 +366,33 @@ describe("findTranscript", () => {
     expect(await findTranscript(REPO, { home })).toBeNull();
   });
 
+  it("omits reasoning entirely when asked to", async () => {
+    const dir = projectDir();
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, "s.jsonl"),
+      rec({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private reasoning" },
+            { type: "text", text: "the visible reply" },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    const on = (await findTranscript(REPO, { home }))!;
+    expect(on.content.some((t) => t.kind === "thinking")).toBe(true);
+    expect(on.thinkingTurns).toBe(1);
+
+    const off = (await findTranscript(REPO, { home, thinking: false }))!;
+    expect(off.content.some((t) => t.kind === "thinking")).toBe(false);
+    expect(off.thinkingTurns).toBe(0);
+    expect(JSON.stringify(off.content)).not.toContain("private reasoning");
+  });
+
   it("returns null rather than throwing on unreadable content", async () => {
     const dir = projectDir();
     await mkdir(dir, { recursive: true });
@@ -267,7 +406,13 @@ describe("findTranscript", () => {
     await writeFile(path.join(dir, "s.jsonl"), userTurn("something private"), "utf8");
     const t = (await findTranscript(REPO, { home }))!;
     const ref = toRef(t);
-    expect(Object.keys(ref).sort()).toEqual(["droppedTurns", "sessionId", "source", "turns"]);
+    expect(Object.keys(ref).sort()).toEqual([
+      "droppedTurns",
+      "sessionId",
+      "source",
+      "thinkingTurns",
+      "turns",
+    ]);
     expect(JSON.stringify(ref)).not.toContain("something private");
   });
 });
@@ -296,10 +441,21 @@ describe("transcript in the prompt", () => {
     file: "/x.jsonl",
     branch: null,
     turns: 2,
+    thinkingTurns: 0,
     droppedTurns: 0,
     content: [
-      { role: "user" as const, text: "the sink token expires after an hour", truncated: false },
-      { role: "assistant" as const, text: "Checking refreshSinkToken.", truncated: false },
+      {
+        role: "user" as const,
+        kind: "text" as const,
+        text: "the sink token expires after an hour",
+        truncated: false,
+      },
+      {
+        role: "assistant" as const,
+        kind: "text" as const,
+        text: "Checking refreshSinkToken.",
+        truncated: false,
+      },
     ],
   };
 
@@ -326,6 +482,7 @@ describe("transcript in the prompt", () => {
       content: [
         {
           role: "user" as const,
+          kind: "text" as const,
           text: "it 401s, my key is sk-ant-api03-LEAKEDFROMCHAT0123 and GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
           truncated: false,
         },

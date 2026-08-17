@@ -107,7 +107,13 @@ describe("toRow", () => {
 
   it("reports transcript provenance", () => {
     const withTx = repo({
-      transcript: { source: "claude-code", sessionId: "s1", turns: 8, droppedTurns: 2 },
+      transcript: {
+        source: "claude-code",
+        sessionId: "s1",
+        turns: 8,
+        thinkingTurns: 0,
+        droppedTurns: 2,
+      },
     });
     expect(toRow(withTx, true, NOW)!.fromSession).toBe(true);
     expect(toRow(repo(), true, NOW)!.fromSession).toBe(false);

@@ -61,7 +61,15 @@ export function buildPrompt(state: CapturedState, transcript?: Transcript | null
   // First, because it is the strongest evidence in the payload.
   if (transcript?.content.length) {
     const body = transcript.content
-      .map((t) => `${t.role === "user" ? "DEVELOPER" : "ASSISTANT"}: ${redact(t.text)}`)
+      .map((t) => {
+        const who =
+          t.kind === "thinking"
+            ? "ASSISTANT (reasoning)"
+            : t.role === "user"
+              ? "DEVELOPER"
+              : "ASSISTANT";
+        return `${who}: ${redact(t.text)}`;
+      })
       .join("\n\n");
     out += section("agent_session", body);
   }
@@ -86,10 +94,12 @@ export function buildPrompt(state: CapturedState, transcript?: Transcript | null
   // The payload already sits near the free-tier ceiling, so transcript content
   // has to displace rather than stack. Bulk-written files are the lowest-signal
   // thing here by construction, so they go first, and the individual list is
-  // capped hard — both cheaper than dropping a turn the developer wrote.
+  // cut hard — both cheaper than dropping a turn the developer wrote or the
+  // reasoning behind a reply. `working_tree_status` already names the changed
+  // files, so what is lost here is only the mtime-only tail.
   const hasSession = Boolean(transcript?.content.length);
   const BULK_SAMPLE = hasSession ? 0 : 5;
-  const INDIVIDUAL_LIMIT = hasSession ? 12 : state.recentFiles.length;
+  const INDIVIDUAL_LIMIT = hasSession ? 3 : state.recentFiles.length;
   const individual = state.recentFiles.filter((f) => !f.bulk).slice(0, INDIVIDUAL_LIMIT);
   const bulk = state.recentFiles.filter((f) => f.bulk);
 
