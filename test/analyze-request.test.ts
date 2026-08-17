@@ -126,7 +126,7 @@ describe("Groq provider", () => {
     // system + user, in that order — no assistant prefill.
     expect(req.body.messages).toHaveLength(2);
     expect(req.body.messages[0].role).toBe("system");
-    expect(req.body.messages[0].content).toContain("INTENT and REASONING");
+    expect(req.body.messages[0].content).toContain("EVIDENCE, NOT THE SUBJECT");
     expect(req.body.messages[1].role).toBe("user");
     expect(req.body.messages[1].content).toContain("fix/session-expiry");
   });
@@ -194,7 +194,7 @@ describe("Anthropic provider", () => {
     const req = requests[0]!;
     expect(req.path).toBe("/v1/messages");
     expect(req.body.model).toBe("claude-sonnet-4-6");
-    expect(req.body.system).toContain("INTENT and REASONING");
+    expect(req.body.system).toContain("EVIDENCE, NOT THE SUBJECT");
     // Exactly one user turn — a trailing assistant prefill is rejected on 4.6.
     expect(req.body.messages).toHaveLength(1);
     expect(req.body.messages[0].role).toBe("user");
