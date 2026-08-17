@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   fileNameFor,
+  hasAnySession,
   latestSession,
   listSessions,
   repoKey,
@@ -187,5 +188,40 @@ describe("storage layer", () => {
     expect(text.endsWith("\n")).toBe(true);
     expect(text).toContain('\n  "version": 1');
     expect(() => JSON.parse(text)).not.toThrow();
+  });
+});
+
+describe("hasAnySession", () => {
+  let home: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    home = await tempHome();
+  });
+  afterEach(async () => {
+    await home.cleanup();
+  });
+
+  it("is false on a machine that has never paused", async () => {
+    expect(await hasAnySession(home.dir)).toBe(false);
+  });
+
+  it("is true once any repo has a session, not just this one", async () => {
+    await saveSession(
+      state("/Users/dev/projects/alpha"),
+      {
+        analysis,
+        analysisError: null,
+      },
+      { home: home.dir },
+    );
+    expect(await hasAnySession(home.dir)).toBe(true);
+  });
+
+  it("ignores a sessions directory containing no session files", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const bucket = path.join(home.dir, ".wherewasi", "sessions", "deadbeefcafe");
+    await mkdir(bucket, { recursive: true });
+    await writeFile(path.join(bucket, "README.txt"), "not a session", "utf8");
+    expect(await hasAnySession(home.dir)).toBe(false);
   });
 });

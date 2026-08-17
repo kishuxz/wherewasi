@@ -77,6 +77,30 @@ export async function listSessions(
   return sessions.filter((s): s is Session => s !== null);
 }
 
+/**
+ * True once any repo has a saved session. Distinguishes a genuine first run
+ * from a keyless one, so setup guidance can print once instead of on every
+ * pause — advice that reprints forever stops being read.
+ */
+export async function hasAnySession(home = homedir()): Promise<boolean> {
+  const dir = path.join(rootDir(home), "sessions");
+  let buckets: string[];
+  try {
+    buckets = await readdir(dir);
+  } catch {
+    return false;
+  }
+  for (const bucket of buckets) {
+    try {
+      const names = await readdir(path.join(dir, bucket));
+      if (names.some((n) => n.endsWith(".json"))) return true;
+    } catch {
+      // not a directory, or unreadable — neither counts as a session
+    }
+  }
+  return false;
+}
+
 export async function latestSession(
   repoPath: string,
   opts: { home?: string } = {},

@@ -9,8 +9,14 @@ import { captureState, findRepoRoot, parseSince } from "./capture.js";
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
-import { latestSession, listSessions, saveSession } from "./storage.js";
-import { formatList, formatResume, makePaint, splitWorkingSetEntry } from "./format.js";
+import { hasAnySession, latestSession, listSessions, saveSession } from "./storage.js";
+import {
+  formatList,
+  formatResume,
+  keylessGuidance,
+  makePaint,
+  splitWorkingSetEntry,
+} from "./format.js";
 import type { Session } from "./types.js";
 
 const STDIN_LIMIT = 8000;
@@ -139,6 +145,11 @@ async function cmdPause(note: string | undefined, opts: { since?: string }): Pro
 
   const selection = selectProvider(process.env);
   const hasKey = selection.provider !== null;
+
+  // Read before this pause is written, so the first pause on a machine still
+  // counts as a first run. Only needed on the keyless path.
+  const sessionsExisted = hasKey || (await hasAnySession());
+
   if (hasKey) {
     process.stderr.write(
       paint(`  reconstructing context via ${selection.provider!.name}…\n`, "dim"),
@@ -157,12 +168,12 @@ async function cmdPause(note: string | undefined, opts: { since?: string }): Pro
     process.stdout.write(`  ${paint("✓", "green")} Context saved. ${paint(gist, "dim")}\n`);
   } else {
     process.stdout.write(
-      `  ${paint("✓", "green")} State saved (${stored.recentFiles.length} recent files, ${stored.git.branch || "no branch"}).\n`,
+      `  ${paint("✓", "green")} State saved (${stored.recentFiles.length} recent file${stored.recentFiles.length === 1 ? "" : "s"}, ${stored.git.branch || "no branch"}).\n`,
     );
     if (!hasKey) {
-      process.stdout.write(
-        `    ${paint("Set WHEREWASI_API_KEY to also capture the reasoning behind it.", "yellow")}\n`,
-      );
+      // Checked before this pause is counted, so the first pause on a machine
+      // is the one that gets the full setup block.
+      process.stdout.write(keylessGuidance({ firstRun: !sessionsExisted }));
     } else {
       process.stdout.write(`    ${paint(`Analysis unavailable: ${error}`, "yellow")}\n`);
     }

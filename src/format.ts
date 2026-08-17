@@ -269,6 +269,44 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
   return out;
 }
 
+/**
+ * Shown after a keyless `pause`. The full block prints only on a genuine first
+ * run; every later keyless pause gets the one-liner.
+ *
+ * The local path leads because it is the stronger claim — no key, no account,
+ * nothing leaving the machine — and because pointing a first-time user at a
+ * vendor signup is where onboarding loses them. The quality tradeoff is stated
+ * outright rather than buried: a small local model really is worse (#26), and
+ * discovering that later feels like the tool failing.
+ */
+export function keylessGuidance(opts: { firstRun: boolean; color?: boolean }): string {
+  const paint = makePaint(opts.color ?? colorsEnabled());
+
+  if (!opts.firstRun) {
+    return `    ${paint("Raw state only. Set WHEREWASI_API_KEY, or point WHEREWASI_BASE_URL at a", "yellow")}\n${paint("    local model, to capture the reasoning too.", "yellow")}\n`;
+  }
+
+  const out = [
+    `    ${paint("Saved as raw state — the files and the diff, but not the reasoning", "yellow")}`,
+    `    ${paint("behind them. To get that, point wherewasi at a model:", "yellow")}`,
+    "",
+    `    ${paint("Fully local", "bold")} ${paint("— no key, no account, nothing leaves your machine:", "dim")}`,
+    "",
+    `      ${paint("ollama pull qwen2.5:7b", "cyan")}`,
+    `      ${paint("export WHEREWASI_BASE_URL=http://localhost:11434/v1", "cyan")}`,
+    `      ${paint("export WHEREWASI_MODEL=qwen2.5:7b", "cyan")}`,
+    "",
+    `    ${paint("Hosted", "bold")} ${paint("— any OpenAI-compatible endpoint; the default free tier runs a", "dim")}`,
+    `    ${paint("120B model:", "dim")}`,
+    "",
+    `      ${paint("export WHEREWASI_API_KEY=...", "cyan")}`,
+    "",
+    `    ${paint("Both work. A 7B local model gives noticeably weaker analysis than a", "dim")}`,
+    `    ${paint("120B hosted one, so the choice is privacy against quality.", "dim")}`,
+  ];
+  return `${out.join("\n")}\n`;
+}
+
 export function formatList(
   sessions: Session[],
   opts: { now?: number; color?: boolean } = {},
