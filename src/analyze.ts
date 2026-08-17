@@ -68,22 +68,28 @@ export function buildPrompt(state: CapturedState): string {
     out += section("branch", "(not a git repository)");
   }
 
-  const bulkCount = state.recentFiles.filter((f) => f.bulk).length;
-  out += section(
-    "recently_touched_files",
-    state.recentFiles.length
-      ? state.recentFiles
-          .map((f) => {
-            const tags = [f.inGit ? "git-changed" : "mtime-only", f.bulk ? "bulk-edit" : null]
-              .filter(Boolean)
-              .join(", ");
-            return `${f.path}\t${f.mtime}\t[${tags}]`;
-          })
-          .join("\n")
-      : "(none)",
-  );
+  // Storage keeps all 40 for `resume --open`; the prompt does not need them.
+  // Bulk-written files are the low-signal ones by definition, so a handful
+  // plus a count conveys the same context at a fraction of the token cost —
+  // which matters because prompt length competes with the diff for one budget.
+  const BULK_SAMPLE = 5;
+  const individual = state.recentFiles.filter((f) => !f.bulk);
+  const bulk = state.recentFiles.filter((f) => f.bulk);
 
-  if (bulkCount > 0) {
+  const render = (f: (typeof state.recentFiles)[number]) =>
+    `${f.path}\t${f.mtime}\t[${f.inGit ? "git-changed" : "mtime-only"}]`;
+
+  const lines = individual.map(render);
+  if (bulk.length) {
+    lines.push(...bulk.slice(0, BULK_SAMPLE).map((f) => `${render(f)} [bulk-edit]`));
+    if (bulk.length > BULK_SAMPLE) {
+      lines.push(`… and ${bulk.length - BULK_SAMPLE} more files from the same bulk edit`);
+    }
+  }
+
+  out += section("recently_touched_files", lines.length ? lines.join("\n") : "(none)");
+
+  if (bulk.length) {
     out += section(
       "reading_the_file_list",
       "Files tagged bulk-edit were written together in seconds — a codemod, a formatter, or an agent — so they show attention far less reliably than files touched individually. Weight them below the rest. Files tagged git-changed are the strongest signal; mtime-only files may just have been read or rebuilt.",
