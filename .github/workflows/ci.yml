@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A force-push or a quick follow-up commit should cancel the run it replaces
+# rather than queue behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Reads the version from `packageManager`, so CI resolves the same pnpm
+      # the lockfile was written by.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # Frozen: a lockfile that no longer matches package.json should fail here
+      # rather than be silently resolved into something nobody tested.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run build
+
+      # The published artifact is what users actually run, so exercise it —
+      # a build that emits an unrunnable entrypoint passes every step above.
+      - name: Smoke-test the built CLI
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js --help
