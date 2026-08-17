@@ -11,6 +11,12 @@
     "developer-tools"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kishuxz/wherewasi.git"
+  },
+  "homepage": "https://github.com/kishuxz/wherewasi#readme",
+  "bugs": "https://github.com/kishuxz/wherewasi/issues",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -23,6 +29,7 @@
     "README.md"
   ],
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
