@@ -326,6 +326,9 @@ export function formatList(
       when: relativeTime(s.savedAt, opts.now ?? Date.now()),
       branch: s.git.branch || "—",
       summary,
+      // Automatic captures outnumber deliberate ones, so the deliberate ones
+      // have to stay findable.
+      auto: s.trigger === "auto",
     };
   });
 
@@ -336,14 +339,23 @@ export function formatList(
   const clip = (text: string, width: number) =>
     text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width);
 
+  const anyAuto = rows.some((r) => r.auto);
+  // The marker column only exists once something is marked, so a purely
+  // manual history looks exactly as it did before.
+  const mark = (auto: boolean) => (anyAuto ? (auto ? `${paint("⟳", "dim")} ` : "  ") : "");
+
   const out: string[] = [""];
   out.push(
-    `  ${paint(clip("WHEN", whenW), "dim")}  ${paint(clip("BRANCH", branchW), "dim")}  ${paint("SUMMARY", "dim")}`,
+    `  ${paint(clip("WHEN", whenW), "dim")}  ${paint(clip("BRANCH", branchW), "dim")}  ${anyAuto ? "  " : ""}${paint("SUMMARY", "dim")}`,
   );
   for (const r of rows) {
     out.push(
-      `  ${clip(r.when, whenW)}  ${paint(clip(r.branch, branchW), "cyan")}  ${clip(r.summary, 60).trimEnd()}`,
+      `  ${clip(r.when, whenW)}  ${paint(clip(r.branch, branchW), "cyan")}  ${mark(r.auto)}${clip(r.summary, 60).trimEnd()}`,
     );
+  }
+  if (anyAuto) {
+    out.push("");
+    out.push(`  ${paint("⟳ captured automatically", "dim")}`);
   }
   out.push("");
   return `${out.join("\n")}\n`;

@@ -25,6 +25,16 @@ async function git(args: string[], cwd: string): Promise<string> {
       cwd,
       maxBuffer: 32 * 1024 * 1024,
       timeout: 4000,
+      // `git status` and `git diff` refresh the index, which takes
+      // .git/index.lock. A capture running alongside the user's own git
+      // command then makes *their* command fail with "Unable to create
+      // index.lock". Observed with the post-checkout hook: the detached
+      // capture from one checkout collided with the next one.
+      //
+      // Reading state must never be able to break a write. This tells git to
+      // skip anything needing that lock, at the cost of a possibly stale index
+      // — which does not matter for output we only read.
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     });
     return stdout.trimEnd();
   } catch {
@@ -44,6 +54,15 @@ export function truncate(text: string, limit = DIFF_LIMIT): { text: string; trun
 export async function findRepoRoot(cwd: string): Promise<string | null> {
   const root = await git(["rev-parse", "--show-toplevel"], cwd);
   return root ? path.resolve(root) : null;
+}
+
+/**
+ * The `.git` directory itself, which is where hooks live. Not always
+ * `<root>/.git` — worktrees and submodules put it elsewhere.
+ */
+export async function findGitDir(cwd: string): Promise<string | null> {
+  const dir = await git(["rev-parse", "--absolute-git-dir"], cwd);
+  return dir ? path.resolve(dir) : null;
 }
 
 export async function captureGit(root: string): Promise<GitState> {

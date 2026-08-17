@@ -60,4 +60,10 @@ export interface Session extends CapturedState {
   analysis: Analysis | null;
   /** human-readable reason the analysis is missing */
   analysisError: string | null;
+  /**
+   * How the pause was initiated. Automatic captures far outnumber deliberate
+   * ones, so `list` needs to tell them apart or the pause you are looking for
+   * is buried. Absent on sessions written before this existed.
+   */
+  trigger?: "manual" | "auto";
 }
