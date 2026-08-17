@@ -6,6 +6,7 @@ import { fstatSync } from "node:fs";
 import path from "node:path";
 import { captureState, findRepoRoot } from "./capture.js";
 import { analyze } from "./analyze.js";
+import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
 import { latestSession, listSessions, saveSession } from "./storage.js";
 import { formatList, formatResume, makePaint, splitWorkingSetEntry } from "./format.js";
@@ -92,10 +93,15 @@ async function cmdPause(note: string | undefined): Promise<void> {
     input: state.input ? redact(state.input) : null,
   };
 
-  const hasKey = Boolean(process.env["ANTHROPIC_API_KEY"]);
-  if (hasKey) process.stderr.write(paint("  reconstructing context…\n", "dim"));
+  const selection = selectProvider(process.env);
+  const hasKey = selection.provider !== null;
+  if (hasKey) {
+    process.stderr.write(
+      paint(`  reconstructing context via ${selection.provider!.name}…\n`, "dim"),
+    );
+  }
 
-  const { analysis, error } = await analyze(stored);
+  const { analysis, error } = await analyze(stored, { provider: selection.provider });
   const { session, file } = await saveSession(stored, { analysis, analysisError: error });
 
   const totalMs = Date.now() - started;
@@ -111,7 +117,7 @@ async function cmdPause(note: string | undefined): Promise<void> {
     );
     if (!hasKey) {
       process.stdout.write(
-        `    ${paint("Set ANTHROPIC_API_KEY to also capture the reasoning behind it.", "yellow")}\n`,
+        `    ${paint("Set GROQ_API_KEY to also capture the reasoning behind it.", "yellow")}\n`,
       );
     } else {
       process.stdout.write(`    ${paint(`Analysis unavailable: ${error}`, "yellow")}\n`);

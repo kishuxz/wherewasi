@@ -1,10 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { redact } from "./redact.js";
+import { ProviderError, selectProvider } from "./providers/index.js";
+import type { Provider, ProviderEnv } from "./providers/index.js";
 import type { Analysis, CapturedState } from "./types.js";
 
-export const MODEL = "claude-sonnet-4-6";
-const MAX_TOKENS = 1500;
-const TIMEOUT_MS = 25_000;
+/**
+ * Reasoning models bill their thinking against the completion budget, so this
+ * has to cover the trace as well as the ~400 tokens of JSON we actually want.
+ */
+const MAX_TOKENS = 4000;
 
 const SYSTEM = `You reconstruct a developer's mental state at the moment they were interrupted.
 
@@ -22,6 +25,8 @@ Rules:
 
 Respond with a single JSON object and nothing else — no prose, no markdown fences. Shape:
 {"summary": string, "hypothesis": string, "ruled_out": string[], "working_set": string[], "next_step": string}`;
+
+export const SYSTEM_PROMPT = SYSTEM;
 
 function section(title: string, body: string): string {
   if (!body || !body.trim()) return "";
@@ -57,7 +62,13 @@ export function buildPrompt(state: CapturedState): string {
   return out;
 }
 
-/** Pulls a JSON object out of a response that may have stray prose or fences. */
+/**
+ * Pulls a JSON object out of a response that may have stray prose or fences.
+ *
+ * With response_format=json_object this is a no-op on the happy path, but it
+ * stays because Anthropic has no equivalent directive and any model can ignore
+ * one.
+ */
 export function parseAnalysis(text: string): Analysis {
   let candidate = text.trim();
 
@@ -96,6 +107,14 @@ export function parseAnalysis(text: string): Analysis {
 export interface AnalyzeResult {
   analysis: Analysis | null;
   error: string | null;
+  /** Which model answered, for reporting only — not persisted. */
+  model: string | null;
+}
+
+export interface AnalyzeOptions {
+  /** Inject a provider directly; otherwise one is selected from env. */
+  provider?: Provider | null;
+  env?: ProviderEnv;
 }
 
 /**
@@ -104,38 +123,36 @@ export interface AnalyzeResult {
  */
 export async function analyze(
   state: CapturedState,
-  opts: { apiKey?: string | undefined } = {},
+  opts: AnalyzeOptions = {},
 ): Promise<AnalyzeResult> {
-  const apiKey = opts.apiKey ?? process.env["ANTHROPIC_API_KEY"];
-  if (!apiKey) {
-    return { analysis: null, error: "ANTHROPIC_API_KEY is not set" };
+  let provider = opts.provider ?? null;
+
+  if (!provider) {
+    const selection = selectProvider(opts.env ?? process.env);
+    if (!selection.provider) {
+      return { analysis: null, error: selection.reason, model: null };
+    }
+    provider = selection.provider;
   }
 
-  const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 1 });
-
   try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      // Latency matters more than depth here — pause must not interrupt the
-      // interruption. The inference is bounded and the evidence is all present.
-      thinking: { type: "disabled" },
+    const result = await provider.complete({
       system: SYSTEM,
-      messages: [{ role: "user", content: buildPrompt(state) }],
+      user: buildPrompt(state),
+      maxTokens: MAX_TOKENS,
     });
-
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-
-    if (response.stop_reason === "refusal") {
-      return { analysis: null, error: "the model declined to analyze this state" };
-    }
-
-    return { analysis: parseAnalysis(text), error: null };
+    return { analysis: parseAnalysis(result.text), error: null, model: result.model };
   } catch (err) {
+    if (err instanceof ProviderError) {
+      // Rate limiting is the expected failure on a free tier, so say so plainly
+      // instead of surfacing a raw HTTP message.
+      const message =
+        err.kind === "rate_limit"
+          ? `${err.message} — state saved without analysis; try again in a minute`
+          : err.message;
+      return { analysis: null, error: message, model: provider.model };
+    }
     const message = err instanceof Error ? err.message : String(err);
-    return { analysis: null, error: message };
+    return { analysis: null, error: message, model: provider.model };
   }
 }

@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
-import { MODEL, analyze } from "../src/analyze.js";
+import { analyze } from "../src/analyze.js";
+import { AnthropicProvider, GroqProvider } from "../src/providers/index.js";
 import type { CapturedState } from "../src/types.js";
 
 /**
- * Exercises the real SDK against a local stub so the request shape is verified
- * without a live key: correct model, no prefill turn, JSON round-trip.
+ * Exercises both providers against a local stub so the wire format is pinned
+ * without a live key: correct endpoint, correct request shape, and every
+ * failure mode degrading to an error string rather than an exception.
  */
 
 const state: CapturedState = {
@@ -34,129 +36,209 @@ const reply = {
   next_step: "Write a failing test for a 61-minute-old token.",
 };
 
-describe("analyze against a stub server", () => {
-  let server: Server;
-  let requests: { path: string; headers: Record<string, unknown>; body: any }[] = [];
-  let respond: (res: import("node:http").ServerResponse) => void;
+interface Captured {
+  path: string;
+  auth: string | undefined;
+  body: any;
+}
 
-  beforeAll(async () => {
-    server = createServer((req, res) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (c) => chunks.push(c));
-      req.on("end", () => {
-        requests.push({
-          path: req.url ?? "",
-          headers: req.headers as Record<string, unknown>,
-          body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
-        });
-        respond(res);
+let server: Server;
+let baseUrl = "";
+let requests: Captured[] = [];
+let respond: (res: ServerResponse) => void;
+
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      let body: unknown = {};
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        /* leave empty */
+      }
+      requests.push({
+        path: req.url ?? "",
+        auth: req.headers.authorization,
+        body,
       });
+      respond(res);
     });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    const { port } = server.address() as AddressInfo;
-    process.env["ANTHROPIC_BASE_URL"] = `http://127.0.0.1:${port}`;
   });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
 
-  afterAll(async () => {
-    delete process.env["ANTHROPIC_BASE_URL"];
-    await new Promise<void>((r) => server.close(() => r()));
-  });
+afterAll(async () => {
+  await new Promise<void>((r) => server.close(() => r()));
+});
 
-  const okBody = (text: string) =>
-    JSON.stringify({
-      id: "msg_stub",
-      type: "message",
-      role: "assistant",
-      model: MODEL,
-      content: [{ type: "text", text }],
-      stop_reason: "end_turn",
-      usage: { input_tokens: 100, output_tokens: 50 },
-    });
+const json = (res: ServerResponse, status: number, body: unknown) => {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify(body));
+};
 
-  it("sends a well-formed request and parses the analysis", async () => {
+const groqOk = (content: string) => ({
+  id: "chatcmpl-stub",
+  model: "openai/gpt-oss-120b",
+  choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+  usage: { completion_tokens: 120 },
+});
+
+const anthropicOk = (text: string) => ({
+  id: "msg_stub",
+  type: "message",
+  role: "assistant",
+  model: "claude-sonnet-4-6",
+  content: [{ type: "text", text }],
+  stop_reason: "end_turn",
+  usage: { input_tokens: 100, output_tokens: 50 },
+});
+
+const groq = (model?: string) =>
+  new GroqProvider({ apiKey: "gsk_test", baseUrl: `${baseUrl}/openai/v1`, model: model ?? "" });
+
+const anthropic = () => {
+  process.env["ANTHROPIC_BASE_URL"] = baseUrl;
+  return new AnthropicProvider({ apiKey: "sk-ant-test" });
+};
+
+describe("Groq provider", () => {
+  it("sends an OpenAI chat-completions request and parses the analysis", async () => {
     requests = [];
-    respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(okBody(JSON.stringify(reply)));
-    };
+    respond = (res) => json(res, 200, groqOk(JSON.stringify(reply)));
 
-    const result = await analyze(state, { apiKey: "sk-ant-test" });
+    const result = await analyze(state, { provider: groq() });
+
+    expect(result.error).toBeNull();
+    expect(result.analysis).toEqual(reply);
+    expect(result.model).toBe("openai/gpt-oss-120b");
+
+    expect(requests).toHaveLength(1);
+    const req = requests[0]!;
+    expect(req.path).toBe("/openai/v1/chat/completions");
+    expect(req.auth).toBe("Bearer gsk_test");
+    expect(req.body.model).toBe("openai/gpt-oss-120b");
+    expect(req.body.response_format).toEqual({ type: "json_object" });
+    expect(req.body.max_completion_tokens).toBeGreaterThan(0);
+
+    // system + user, in that order — no assistant prefill.
+    expect(req.body.messages).toHaveLength(2);
+    expect(req.body.messages[0].role).toBe("system");
+    expect(req.body.messages[0].content).toContain("INTENT and REASONING");
+    expect(req.body.messages[1].role).toBe("user");
+    expect(req.body.messages[1].content).toContain("fix/session-expiry");
+  });
+
+  it("honours a model override", async () => {
+    requests = [];
+    respond = (res) => json(res, 200, groqOk(JSON.stringify(reply)));
+    await analyze(state, { provider: groq("llama-3.1-8b-instant") });
+    expect(requests[0]!.body.model).toBe("llama-3.1-8b-instant");
+  });
+
+  it("degrades on 429 with a message that says to retry", async () => {
+    respond = (res) => json(res, 429, { error: { message: "Rate limit reached for model" } });
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/rate limit/i);
+    expect(result.error).toMatch(/try again/i);
+  });
+
+  it("reports an auth failure distinctly", async () => {
+    respond = (res) => json(res, 401, { error: { message: "Invalid API Key" } });
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/rejected the API key/i);
+  });
+
+  it("reports a server error without throwing", async () => {
+    respond = (res) => json(res, 500, { error: { message: "internal" } });
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/500/);
+  });
+
+  it("reports unparseable output without throwing", async () => {
+    respond = (res) => json(res, 200, groqOk("I'm not going to answer in JSON."));
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+
+  it("still rescues fenced JSON via the tolerant parser", async () => {
+    respond = (res) => json(res, 200, groqOk("```json\n" + JSON.stringify(reply) + "\n```"));
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis?.summary).toBe(reply.summary);
+  });
+
+  it("reports an empty completion", async () => {
+    respond = (res) => json(res, 200, groqOk(""));
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/empty/i);
+  });
+});
+
+describe("Anthropic provider", () => {
+  it("sends a messages request and parses the analysis", async () => {
+    requests = [];
+    respond = (res) => json(res, 200, anthropicOk(JSON.stringify(reply)));
+
+    const result = await analyze(state, { provider: anthropic() });
 
     expect(result.error).toBeNull();
     expect(result.analysis).toEqual(reply);
 
-    expect(requests).toHaveLength(1);
     const req = requests[0]!;
     expect(req.path).toBe("/v1/messages");
     expect(req.body.model).toBe("claude-sonnet-4-6");
     expect(req.body.system).toContain("INTENT and REASONING");
-    expect(req.body.max_tokens).toBeGreaterThan(0);
-
     // Exactly one user turn — a trailing assistant prefill is rejected on 4.6.
     expect(req.body.messages).toHaveLength(1);
     expect(req.body.messages[0].role).toBe("user");
-    expect(req.body.messages[0].content).toContain("fix/session-expiry");
-    expect(req.body.messages.at(-1).role).not.toBe("assistant");
-
-    // Deprecated / rejected knobs must be absent.
     expect(req.body.temperature).toBeUndefined();
     expect(req.body.top_p).toBeUndefined();
-    expect(req.body.thinking?.budget_tokens).toBeUndefined();
-    expect(req.body.output_format).toBeUndefined();
+    expect(req.body.response_format).toBeUndefined();
   });
 
-  it("tolerates a fenced JSON response", async () => {
-    requests = [];
-    respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(okBody("```json\n" + JSON.stringify(reply) + "\n```"));
-    };
-    const result = await analyze(state, { apiKey: "sk-ant-test" });
-    expect(result.analysis?.summary).toBe(reply.summary);
-  });
-
-  it("reports an API error instead of throwing", async () => {
-    requests = [];
-    respond = (res) => {
-      res.writeHead(400, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "bad" } }),
-      );
-    };
-    const result = await analyze(state, { apiKey: "sk-ant-test" });
+  it("degrades on 429 with a retry message", async () => {
+    respond = (res) => json(res, 429, { type: "error", error: { message: "rate limited" } });
+    const result = await analyze(state, { provider: anthropic() });
     expect(result.analysis).toBeNull();
-    expect(result.error).toBeTruthy();
-  });
-
-  it("reports unparseable output instead of throwing", async () => {
-    requests = [];
-    respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(okBody("I'm not going to answer in JSON."));
-    };
-    const result = await analyze(state, { apiKey: "sk-ant-test" });
-    expect(result.analysis).toBeNull();
-    expect(result.error).toBeTruthy();
+    expect(result.error).toMatch(/rate limit/i);
+    expect(result.error).toMatch(/try again/i);
   });
 
   it("surfaces a refusal as a clean error", async () => {
-    requests = [];
-    respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({
-          id: "msg_stub",
-          type: "message",
-          role: "assistant",
-          model: MODEL,
-          content: [],
-          stop_reason: "refusal",
-          usage: { input_tokens: 10, output_tokens: 0 },
-        }),
-      );
-    };
-    const result = await analyze(state, { apiKey: "sk-ant-test" });
+    respond = (res) =>
+      json(res, 200, {
+        id: "msg_stub",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [],
+        stop_reason: "refusal",
+        usage: { input_tokens: 10, output_tokens: 0 },
+      });
+    const result = await analyze(state, { provider: anthropic() });
     expect(result.analysis).toBeNull();
     expect(result.error).toMatch(/declined/);
+  });
+
+  it("reports unparseable output without throwing", async () => {
+    respond = (res) => json(res, 200, anthropicOk("no json here"));
+    const result = await analyze(state, { provider: anthropic() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+});
+
+describe("no provider", () => {
+  it("degrades to raw state when no key is set", async () => {
+    const result = await analyze(state, { env: {} });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/GROQ_API_KEY or ANTHROPIC_API_KEY/);
   });
 });
