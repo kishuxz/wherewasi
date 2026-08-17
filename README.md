@@ -93,6 +93,26 @@ Or keep it on `$PATH`:
 npm install -g wherewasi
 ```
 
+### Then point it at a model
+
+`pause` and `resume` work immediately with no key — you get the files and the diff. The reasoning above needs a model behind it, and there are two ways to get one.
+
+**Fully local. No key, no account, nothing leaves your machine:**
+
+```sh
+ollama pull qwen2.5:7b
+export WHEREWASI_BASE_URL=http://localhost:11434/v1
+export WHEREWASI_MODEL=qwen2.5:7b
+```
+
+**Hosted, if you want the sharper analysis** — any OpenAI-compatible endpoint; the default is Groq's free tier running a 120B model:
+
+```sh
+export WHEREWASI_API_KEY=...
+```
+
+Both are real options, and the tradeoff is honest: a 7B local model is noticeably weaker than a 120B hosted one (see [Known limits](#known-limits)). Pick privacy or pick quality — the tool does not care, and `pause` tells you how to set either up the first time you run it without a key.
+
 ---
 
 ## Configuring the model

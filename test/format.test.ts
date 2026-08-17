@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatList,
   formatResume,
+  keylessGuidance,
   relativeTime,
   splitWorkingSetEntry,
   truncationNotice,
@@ -271,5 +272,39 @@ describe("truncationNotice", () => {
     const out = formatResume(raw, opts);
     expect(out).toContain("the stored diff is partial");
     expect(out).not.toContain("working set may be incomplete");
+  });
+});
+
+describe("keylessGuidance", () => {
+  const first = keylessGuidance({ firstRun: true, color: false });
+  const later = keylessGuidance({ firstRun: false, color: false });
+
+  it("leads with the local path on a first run", () => {
+    expect(first.indexOf("Fully local")).toBeGreaterThan(-1);
+    // The zero-key option must come before the one that needs an account.
+    expect(first.indexOf("Fully local")).toBeLessThan(first.indexOf("Hosted"));
+  });
+
+  it("gives a runnable local setup, not a pointer to docs", () => {
+    expect(first).toContain("ollama pull qwen2.5:7b");
+    expect(first).toContain("WHEREWASI_BASE_URL=http://localhost:11434/v1");
+    expect(first).toContain("WHEREWASI_MODEL=qwen2.5:7b");
+  });
+
+  it("states the quality tradeoff rather than implying local is strictly better", () => {
+    expect(first).toContain("privacy against quality");
+    expect(first).toContain("weaker analysis");
+  });
+
+  it("stays terse after the first run", () => {
+    expect(later).not.toContain("ollama pull");
+    expect(later).toContain("WHEREWASI_API_KEY");
+    expect(later.split("\n").length).toBeLessThan(first.split("\n").length);
+  });
+
+  it("never claims a key is required", () => {
+    for (const text of [first, later]) {
+      expect(text).not.toMatch(/requires? (an )?API key/i);
+    }
   });
 });
