@@ -11,3 +11,7 @@ dist/
 
 # Evaluation output — real captured sessions, not for the repo.
 eval/out/
+
+# Python bytecode from the eval harness.
+__pycache__/
+*.pyc
