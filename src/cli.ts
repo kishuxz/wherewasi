@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { fstatSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { captureState, findRepoRoot, parseSince } from "./capture.js";
 import { analyze } from "./analyze.js";
@@ -14,6 +15,22 @@ import type { Session } from "./types.js";
 
 const STDIN_LIMIT = 8000;
 const STDIN_WAIT_MS = 3000;
+
+/**
+ * Single source of truth for the version. `dist/cli.js` and `src/cli.ts` are
+ * both exactly one level below the package root, so the same relative path
+ * resolves under `tsx` and in the built artifact.
+ */
+export function readVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require("../package.json") as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    // Packaged oddly, or bundled — a wrong version is worse than an unknown one.
+    return "0.0.0";
+  }
+}
 
 /**
  * True only for an actual pipe or redirected file. A non-TTY stdin is not
@@ -219,9 +236,16 @@ const program = new Command();
 program
   .name("wherewasi")
   .description(
-    "Save and restore your mental context across interruptions.\nEverything stays on this machine except one Anthropic API call.",
+    [
+      "Save and restore your mental context across interruptions.",
+      "",
+      "Sessions are stored on this machine only, under ~/.wherewasi.",
+      "`pause` makes one call to whichever OpenAI-compatible endpoint you",
+      "configure; `resume` and `list` make none. Point WHEREWASI_BASE_URL at a",
+      "local model (e.g. http://localhost:11434/v1) and nothing leaves at all.",
+    ].join("\n"),
   )
-  .version("0.1.0");
+  .version(readVersion());
 
 program
   .command("pause")

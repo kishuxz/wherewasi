@@ -137,6 +137,7 @@ describe("formatResume without an analysis", () => {
     ...base,
     analysis: null,
     analysisError: "ANTHROPIC_API_KEY is not set",
+    window: { from: "2026-01-15T10:00:00.000Z", source: "fallback", bulkCount: 0 },
   };
   const out = formatResume(keyless, opts);
 
@@ -186,5 +187,51 @@ describe("formatList", () => {
 
   it("explains itself when empty", () => {
     expect(formatList([], opts)).toContain("No pauses saved for this repo yet");
+  });
+});
+
+describe("describeWindow", () => {
+  const raw = { ...base, analysis: null };
+
+  it("names the previous pause when the window was anchored to it", () => {
+    const out = formatResume(
+      { ...raw, window: { from: "2026-01-15T10:00:00.000Z", source: "last-pause", bulkCount: 0 } },
+      opts,
+    );
+    expect(out).toContain("Files touched since your previous pause");
+    expect(out).not.toContain("2 hours before you paused");
+  });
+
+  it("reports an explicit --since relative to the pause, not to now", () => {
+    // savedAt is 12:00 and the window opens at 11:30, so this must read "30
+    // minutes" whether the session is resumed at 14:00 or a week later.
+    const session = {
+      ...raw,
+      window: { from: "2026-01-15T11:30:00.000Z", source: "explicit" as const, bulkCount: 0 },
+    };
+    expect(formatResume(session, opts)).toContain("since 30 minutes before you paused");
+    expect(formatResume(session, { now: NOW + 7 * 86400_000, color: false })).toContain(
+      "since 30 minutes before you paused",
+    );
+  });
+
+  it("keeps the 2-hour wording only for the fallback window", () => {
+    const out = formatResume(
+      { ...raw, window: { from: "2026-01-15T10:00:00.000Z", source: "fallback", bulkCount: 0 } },
+      opts,
+    );
+    expect(out).toContain("Files touched in the 2 hours before you paused");
+  });
+
+  it("stays vague for sessions written before the window was recorded", () => {
+    const out = formatResume(raw, opts);
+    expect(out).toContain("Files touched before you paused");
+    expect(out).not.toContain("2 hours before you paused");
+  });
+
+  it("points at the current key variable, not the legacy one", () => {
+    const out = formatResume(raw, opts);
+    expect(out).toContain("WHEREWASI_API_KEY");
+    expect(out).not.toContain("ANTHROPIC_API_KEY");
   });
 });
