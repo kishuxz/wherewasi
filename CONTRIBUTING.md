@@ -8,7 +8,7 @@ Node 20+ and pnpm.
 
 ```sh
 pnpm install
-pnpm test                            # 144 tests, ~700ms, no network
+pnpm test                            # 153 tests, ~700ms, no network
 pnpm dev pause "trying something"    # run the CLI from source
 pnpm dev resume
 ```
