@@ -173,6 +173,30 @@ describe("Groq provider", () => {
     expect(result.analysis?.summary).toBe(reply.summary);
   });
 
+  it("rejects a completion cut off at the token cap", async () => {
+    // json_object closes the braces on a truncated answer, so this parses fine
+    // and is garbage — fields split mid-string, next_step empty. Observed live.
+    respond = (res) =>
+      json(res, 200, {
+        id: "chatcmpl-stub",
+        model: "openai/gpt-oss-120b",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content:
+                '{"summary":"You were debugging","working_set":["a.ts — x","next_step",":"],"next_step":""}',
+            },
+            finish_reason: "length",
+          },
+        ],
+      });
+    const result = await analyze(state, { provider: groq() });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toMatch(/output budget/i);
+  });
+
   it("reports an empty completion", async () => {
     respond = (res) => json(res, 200, groqOk(""));
     const result = await analyze(state, { provider: groq() });
