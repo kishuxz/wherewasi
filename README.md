@@ -62,7 +62,7 @@ Your code does not go anywhere. Concretely:
 
 - **Everything is stored on your machine**, under `~/.wherewasi/`. Nothing is uploaded, synced or backed up.
 - **Nothing is ever written into your repo.** Not a dotfile, not a `.gitignore` entry. Storage lives in your home directory only.
-- **No server, no daemon, no telemetry, no account, no background process.** The binary runs when you type it and exits.
+- **No server, no daemon, no telemetry, no account.** The binary runs and exits. Nothing is resident. If you opt into [automatic capture](#capturing-without-remembering-to), a `pause` is spawned detached by your git hook or shell and exits the same way — still no daemon, still nothing running between captures.
 - **Exactly one network call**, during `pause`, to whichever inference endpoint you configured. `resume` and `list` make none.
 - **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note and any piped output. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
@@ -179,7 +179,36 @@ Prints the most recent pause: summary, hypothesis, ruled-out list, working set w
 
 ### `wherewasi list`
 
-Recent pauses for this repo: when, branch, first line of the summary.
+Recent pauses for this repo: when, branch, first line of the summary. Automatic captures are marked `⟳`, so the pause you deliberately made stays findable.
+
+---
+
+## Capturing without remembering to
+
+The obvious flaw in a tool you have to run _before_ an interruption is that you do not see the interruption coming. Two opt-in integrations remove the dependency. Neither is on unless you turn it on.
+
+```sh
+wherewasi install-hook                  # capture on branch switch
+eval "$(wherewasi shell-init zsh)"      # capture when the shell exits
+```
+
+`install-hook` writes a git `post-checkout` hook into the current repo. `shell-init` prints a snippet for your `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` — it writes nothing itself. Both print exactly what they will do first, and both come back out:
+
+```sh
+wherewasi install-hook --dry-run        # print the hook, write nothing
+wherewasi install-hook --uninstall      # remove it
+wherewasi shell-init zsh --uninstall    # print the line to delete
+```
+
+**It will not slow your commands down.** The capture is detached and its output discarded, so `git checkout` returns immediately — measured at ~9.5ms without the hook and ~17ms with it, all of which is forking a subshell rather than waiting for anything. It cannot fail your checkout either: the hook exits 0 unconditionally, and `pause --auto` exits 0 whatever happens.
+
+**It will not fight your other git commands.** Captures read git state with `GIT_OPTIONAL_LOCKS=0`, so they never take `.git/index.lock`. Without that, a capture triggered by one checkout can make your _next_ git command fail with `Unable to create index.lock` — which it did, before this was fixed.
+
+**It will not clobber an existing hook.** If `.git/hooks/post-checkout` exists and wherewasi did not write it, install refuses and tells you. Uninstall likewise removes only its own.
+
+**It will not spam.** Automatic captures for a repo are debounced to one per two minutes, so closing four terminals or switching branches three times in a row costs one capture, not four. Deliberate `wherewasi pause` is never debounced.
+
+Two honest limits. `post-checkout` runs _after_ the switch, so the branch recorded is the one you landed on, not the one you left. And a capture triggered by shell exit has no note and nothing piped in, so it is working from the diff alone — which is the weakest evidence this tool takes. Automatic capture is a safety net for the times you forget; a deliberate `pause` with a note is still worth much more.
 
 ---
 
@@ -305,7 +334,7 @@ If it isn't `pause`, `resume`, or `list`, it isn't in here.
 
 ```sh
 pnpm install
-pnpm test        # 116 tests: capture, storage, redaction, formatting, both provider wire formats
+pnpm test        # 144 tests: capture, storage, redaction, formatting, both provider wire formats
 pnpm build
 ```
 

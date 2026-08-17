@@ -8,7 +8,7 @@ Node 20+ and pnpm.
 
 ```sh
 pnpm install
-pnpm test                            # 116 tests, ~600ms, no network
+pnpm test                            # 144 tests, ~700ms, no network
 pnpm dev pause "trying something"    # run the CLI from source
 pnpm dev resume
 ```
@@ -78,4 +78,4 @@ The [bug form](https://github.com/kishuxz/wherewasi/issues/new?template=bug_repo
 
 ## Scope
 
-The commands are `pause`, `resume` and `list`. No daemon, no editor plugin, no web UI, no team features, no config file. A PR adding one of those will be declined regardless of quality — please open an issue first if you think a case is genuinely different.
+The commands are `pause`, `resume` and `list`, plus the opt-in `install-hook` and `shell-init`. No daemon, no editor plugin, no web UI, no team features, no config file. A PR adding one of those will be declined regardless of quality — please open an issue first if you think a case is genuinely different.

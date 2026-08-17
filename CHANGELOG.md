@@ -16,7 +16,10 @@ First release.
 
 - **`pause [note] [--since <when>]`** — captures branch, unstaged and staged diffs (8000 chars each), `git log --oneline -10`, `git status --short`, files modified since your last pause (git-changed first, top 40), an optional note, and piped stdin. Sends it to an inference endpoint once and stores the reconstructed reasoning.
 - **`resume [--open]`** — prints the summary, hypothesis, ruled-out list, working set with a reason per file, next step, and how long ago. `--open` opens the working set in `$EDITOR`, skipping files that no longer exist and refusing paths outside the repo.
-- **`list`** — recent pauses for this repo: when, branch, first line of the summary.
+- **`list`** — recent pauses for this repo: when, branch, first line of the summary. Automatic captures are marked.
+- **`install-hook`** — opt-in git `post-checkout` hook capturing on branch switch. Prints the hook before writing, refuses to overwrite one it did not write, and has `--dry-run` and `--uninstall`.
+- **`shell-init [bash|zsh|fish]`** — opt-in snippet capturing when the shell exits. Writes nothing itself; `--uninstall` prints the line to remove.
+- **`pause --auto`** — the mode both integrations use: silent, always exits 0, and debounced to one capture per repo per two minutes.
 - **Any OpenAI-compatible endpoint** via `WHEREWASI_BASE_URL` and `WHEREWASI_MODEL` — Groq (default), OpenAI, Together, OpenRouter, DeepSeek, Ollama. Anthropic is selected by base URL or `WHEREWASI_PROVIDER=anthropic`, since its wire format differs.
 - **A fully local path.** A local base URL requires no API key, so with Ollama the tool makes no network calls at all.
 - **Works with no key.** `pause` still captures and stores everything; `resume` prints the raw state.

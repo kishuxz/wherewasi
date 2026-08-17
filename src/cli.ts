@@ -5,7 +5,7 @@ import { access } from "node:fs/promises";
 import { fstatSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { captureState, findRepoRoot, parseSince } from "./capture.js";
+import { captureState, findGitDir, findRepoRoot, parseSince } from "./capture.js";
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
@@ -17,10 +17,29 @@ import {
   makePaint,
   splitWorkingSetEntry,
 } from "./format.js";
+import {
+  SHELLS,
+  detectShell,
+  hookPath,
+  installHook,
+  postCheckoutHook,
+  shellSnippet,
+  uninstallHook,
+} from "./hooks.js";
 import type { Session } from "./types.js";
 
 const STDIN_LIMIT = 8000;
 const STDIN_WAIT_MS = 3000;
+
+/**
+ * Floor on the interval between automatic captures for one repo.
+ *
+ * Both triggers fire in bursts — closing four terminals, or switching branches
+ * three times while looking for something. Without a floor that writes a
+ * session and spends tokens each time, for context that has not changed.
+ * Deliberate `pause` is never debounced.
+ */
+const AUTO_MIN_INTERVAL_MS = 2 * 60_000;
 
 /**
  * Single source of truth for the version. `dist/cli.js` and `src/cli.ts` are
@@ -94,9 +113,16 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function cmdPause(note: string | undefined, opts: { since?: string }): Promise<void> {
+async function cmdPause(
+  note: string | undefined,
+  opts: { since?: string; auto?: boolean },
+): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
+  // An automatic capture writes nothing, ever. It is triggered by someone
+  // else's command — a git checkout, a shell exiting — and printing into that
+  // output is worse than not running.
+  const say = opts.auto ? () => {} : (text: string) => void process.stdout.write(text);
 
   const input = await readStdin();
 
@@ -115,6 +141,11 @@ async function cmdPause(note: string | undefined, opts: { since?: string }): Pro
   } else {
     const previous = await latestSession(repoPath);
     if (previous) {
+      // Debounced before any work is done, so a burst of triggers costs a
+      // directory read rather than a capture and a network call.
+      if (opts.auto && started - new Date(previous.savedAt).getTime() < AUTO_MIN_INTERVAL_MS) {
+        return;
+      }
       since = new Date(previous.savedAt);
       sinceSource = "last-pause";
     }
@@ -148,40 +179,42 @@ async function cmdPause(note: string | undefined, opts: { since?: string }): Pro
 
   // Read before this pause is written, so the first pause on a machine still
   // counts as a first run. Only needed on the keyless path.
-  const sessionsExisted = hasKey || (await hasAnySession());
+  const sessionsExisted = hasKey || opts.auto || (await hasAnySession());
 
-  if (hasKey) {
+  if (hasKey && !opts.auto) {
     process.stderr.write(
       paint(`  reconstructing context via ${selection.provider!.name}…\n`, "dim"),
     );
   }
 
   const { analysis, error } = await analyze(stored, { provider: selection.provider });
-  const { session, file } = await saveSession(stored, { analysis, analysisError: error });
+  const { session, file } = await saveSession(stored, {
+    analysis,
+    analysisError: error,
+    trigger: opts.auto ? "auto" : "manual",
+  });
 
   const totalMs = Date.now() - started;
-  process.stdout.write("\n");
+  say("\n");
 
   if (analysis) {
     // One sentence only — you are being interrupted, not reading a report.
     const gist = analysis.summary.split(/(?<=\.)\s/)[0] ?? analysis.summary;
-    process.stdout.write(`  ${paint("✓", "green")} Context saved. ${paint(gist, "dim")}\n`);
+    say(`  ${paint("✓", "green")} Context saved. ${paint(gist, "dim")}\n`);
   } else {
-    process.stdout.write(
+    say(
       `  ${paint("✓", "green")} State saved (${stored.recentFiles.length} recent file${stored.recentFiles.length === 1 ? "" : "s"}, ${stored.git.branch || "no branch"}).\n`,
     );
     if (!hasKey) {
       // Checked before this pause is counted, so the first pause on a machine
       // is the one that gets the full setup block.
-      process.stdout.write(keylessGuidance({ firstRun: !sessionsExisted }));
+      say(keylessGuidance({ firstRun: !sessionsExisted }));
     } else {
-      process.stdout.write(`    ${paint(`Analysis unavailable: ${error}`, "yellow")}\n`);
+      say(`    ${paint(`Analysis unavailable: ${error}`, "yellow")}\n`);
     }
   }
 
-  process.stdout.write(
-    `    ${paint(`${file}  ·  capture ${captureMs}ms, total ${totalMs}ms`, "dim")}\n\n`,
-  );
+  say(`    ${paint(`${file}  ·  capture ${captureMs}ms, total ${totalMs}ms`, "dim")}\n\n`);
   void session;
 }
 
@@ -242,6 +275,104 @@ async function cmdList(): Promise<void> {
   process.stdout.write(formatList(sessions));
 }
 
+/**
+ * Absolute paths to the node running us and to this entrypoint, embedded into
+ * the hook and the snippet. Both absolute so an automatic capture does not
+ * depend on the PATH of whatever spawned it.
+ */
+function cliPath(): string {
+  return path.resolve(process.argv[1] ?? "wherewasi");
+}
+
+function nodePath(): string {
+  return process.execPath;
+}
+
+async function cmdInstallHook(opts: { uninstall?: boolean; dryRun?: boolean }): Promise<void> {
+  const paint = makePaint();
+  const gitDir = await findGitDir(process.cwd());
+  if (!gitDir) fail("not a git repository — nothing to install a hook into");
+
+  const file = hookPath(gitDir);
+
+  if (opts.uninstall) {
+    const result = await uninstallHook(gitDir);
+    if (!result.ok) {
+      fail(
+        `${file} was not written by wherewasi — refusing to remove it.\n` +
+          `  Delete it yourself if you are sure.`,
+      );
+    }
+    process.stdout.write(
+      result.action === "removed"
+        ? `\n  ${paint("✓", "green")} Removed ${file}\n\n`
+        : `\n  Nothing to remove — no hook at ${file}\n\n`,
+    );
+    return;
+  }
+
+  const content = postCheckoutHook(nodePath(), cliPath());
+
+  // Printed in full before anything is written. A hook runs on someone's
+  // machine on every checkout; they are entitled to read it first.
+  process.stdout.write(`\n  ${paint(`Will write ${file}:`, "bold")}\n\n`);
+  for (const line of content.trimEnd().split("\n")) {
+    process.stdout.write(`    ${paint(line, "dim")}\n`);
+  }
+  process.stdout.write("\n");
+
+  if (opts.dryRun) {
+    process.stdout.write(`  ${paint("--dry-run: nothing written.", "yellow")}\n\n`);
+    return;
+  }
+
+  const result = await installHook(gitDir, nodePath(), cliPath());
+  if (!result.ok) {
+    fail(
+      `${file} already exists and was not written by wherewasi.\n` +
+        `  Refusing to overwrite it. Merge the snippet above in by hand, or move\n` +
+        `  the existing hook aside first.`,
+    );
+  }
+
+  process.stdout.write(
+    `  ${paint("✓", "green")} ${result.action === "updated" ? "Updated" : "Installed"} ${result.file}\n` +
+      `    Captures on branch switch. Remove with ${paint("wherewasi install-hook --uninstall", "cyan")}.\n\n`,
+  );
+}
+
+function cmdShellInit(shellArg: string | undefined, opts: { uninstall?: boolean }): void {
+  const paint = makePaint();
+  const shell = shellArg
+    ? (SHELLS.find((s) => s === shellArg) ?? null)
+    : detectShell(process.env as Record<string, string | undefined>);
+
+  if (!shell) {
+    fail(
+      shellArg
+        ? `unknown shell "${shellArg}" — expected one of ${SHELLS.join(", ")}`
+        : `could not detect your shell from $SHELL — pass one of ${SHELLS.join(", ")}`,
+    );
+  }
+
+  if (opts.uninstall) {
+    const line =
+      shell === "fish"
+        ? `wherewasi shell-init fish | source`
+        : `eval "$(wherewasi shell-init ${shell})"`;
+    const rc = shell === "fish" ? "~/.config/fish/config.fish" : `~/.${shell}rc`;
+    process.stderr.write(
+      `\n  ${paint("Nothing was written by shell-init, so there is nothing to delete.", "bold")}\n` +
+        `  Remove this line from ${paint(rc, "cyan")} and restart your shell:\n\n` +
+        `    ${paint(line, "dim")}\n\n`,
+    );
+    return;
+  }
+
+  // Snippet to stdout and nothing else, so `eval "$(...)"` stays clean.
+  process.stdout.write(shellSnippet(shell, nodePath(), cliPath()));
+}
+
 const program = new Command();
 
 program
@@ -265,9 +396,28 @@ program
     "--since <when>",
     "scan files modified since 30m / 2h / 1d / an ISO timestamp (default: your last pause)",
   )
+  .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
-  .action(async (note: string | undefined, opts: { since?: string }) => {
+  .action(async (note: string | undefined, opts: { since?: string; auto?: boolean }) => {
     await cmdPause(note, opts);
+  });
+
+program
+  .command("install-hook")
+  .option("--uninstall", "remove the hook")
+  .option("--dry-run", "print the hook without writing it")
+  .description("install a git post-checkout hook that captures on branch switch")
+  .action(async (opts: { uninstall?: boolean; dryRun?: boolean }) => {
+    await cmdInstallHook(opts);
+  });
+
+program
+  .command("shell-init")
+  .argument("[shell]", `one of ${SHELLS.join(", ")} (default: detected from $SHELL)`)
+  .option("--uninstall", "print how to remove it")
+  .description("print a shell snippet that captures when the shell exits")
+  .action((shell: string | undefined, opts: { uninstall?: boolean }) => {
+    cmdShellInit(shell, opts);
   });
 
 program
@@ -286,5 +436,8 @@ program
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
+  // An automatic capture must never fail the command that triggered it. A
+  // non-zero exit from a post-checkout hook is noise in someone's git output.
+  if (process.argv.includes("--auto")) process.exit(0);
   fail(err instanceof Error ? err.message : String(err));
 });

@@ -27,7 +27,7 @@ export function fileNameFor(savedAt: string): string {
 
 export async function saveSession(
   state: CapturedState,
-  extra: Pick<Session, "analysis" | "analysisError">,
+  extra: Pick<Session, "analysis" | "analysisError" | "trigger">,
   opts: { home?: string; now?: Date } = {},
 ): Promise<{ session: Session; file: string }> {
   const home = opts.home ?? homedir();
