@@ -66,4 +66,9 @@ export interface Session extends CapturedState {
    * is buried. Absent on sessions written before this existed.
    */
   trigger?: "manual" | "auto";
+  /**
+   * Freeform label from `--tag`, naming one investigation among several in the
+   * same repo. Absent on untagged pauses.
+   */
+  tag?: string;
 }

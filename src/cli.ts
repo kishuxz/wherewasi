@@ -9,7 +9,7 @@ import { captureState, findGitDir, findRepoRoot, parseSince } from "./capture.js
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
-import { hasAnySession, latestSession, listSessions, saveSession } from "./storage.js";
+import { hasAnySession, latestSession, listSessions, listTags, saveSession } from "./storage.js";
 import {
   formatList,
   formatResume,
@@ -115,7 +115,7 @@ function fail(message: string): never {
 
 async function cmdPause(
   note: string | undefined,
-  opts: { since?: string; auto?: boolean },
+  opts: { since?: string; auto?: boolean; tag?: string },
 ): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
@@ -130,6 +130,9 @@ async function cmdPause(
   // wrong in both directions: too short after a long absence, too long after a
   // five-minute interruption.
   const repoPath = await resolveRepoPath();
+  const tag = opts.tag?.trim() || undefined;
+  if (opts.tag !== undefined && !tag) fail("--tag needs a name");
+
   let since: Date | null = null;
   let sinceSource: "last-pause" | "explicit" | undefined;
 
@@ -139,7 +142,10 @@ async function cmdPause(
       fail(`could not parse --since "${opts.since}" (try 30m, 2h, 1d, or an ISO timestamp)`);
     sinceSource = "explicit";
   } else {
-    const previous = await latestSession(repoPath);
+    // Anchored within the tag. With two investigations alternating, the
+    // globally-latest pause belongs to the other one and yields a window far
+    // too short for this one.
+    const previous = await latestSession(repoPath, { tag });
     if (previous) {
       // Debounced before any work is done, so a burst of triggers costs a
       // directory read rather than a capture and a network call.
@@ -192,6 +198,7 @@ async function cmdPause(
     analysis,
     analysisError: error,
     trigger: opts.auto ? "auto" : "manual",
+    ...(tag ? { tag } : {}),
   });
 
   const totalMs = Date.now() - started;
@@ -255,11 +262,22 @@ async function openWorkingSet(session: Session): Promise<void> {
   spawn(cmd, [...args, ...existing], { stdio: "inherit", detached: false });
 }
 
-async function cmdResume(opts: { open?: boolean }): Promise<void> {
+async function cmdResume(tag: string | undefined, opts: { open?: boolean }): Promise<void> {
+  const paint = makePaint();
   const repoPath = await resolveRepoPath();
-  const session = await latestSession(repoPath);
+  const wanted = tag?.trim() || undefined;
+  const session = await latestSession(repoPath, { tag: wanted });
+
   if (!session) {
-    const paint = makePaint();
+    if (wanted) {
+      // Naming the tags that do exist turns a dead end into the next command.
+      const known = await listTags(repoPath);
+      fail(
+        known.length
+          ? `no pause tagged "${wanted}" in this repo. Tagged: ${known.join(", ")}`
+          : `no pause tagged "${wanted}" in this repo, and nothing here is tagged yet.`,
+      );
+    }
     process.stdout.write(
       `\n  No saved context for this repo. Run ${paint("wherewasi pause", "cyan")} before your next interruption.\n\n`,
     );
@@ -396,11 +414,14 @@ program
     "--since <when>",
     "scan files modified since 30m / 2h / 1d / an ISO timestamp (default: your last pause)",
   )
+  .option("--tag <name>", "label this pause, to resume it by name later")
   .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
-  .action(async (note: string | undefined, opts: { since?: string; auto?: boolean }) => {
-    await cmdPause(note, opts);
-  });
+  .action(
+    async (note: string | undefined, opts: { since?: string; auto?: boolean; tag?: string }) => {
+      await cmdPause(note, opts);
+    },
+  );
 
 program
   .command("install-hook")
@@ -422,10 +443,11 @@ program
 
 program
   .command("resume")
+  .argument("[tag]", "resume the most recent pause carrying this tag")
   .option("--open", "open the working set in $EDITOR")
   .description("print the most recent pause for this repo")
-  .action(async (opts: { open?: boolean }) => {
-    await cmdResume(opts);
+  .action(async (tag: string | undefined, opts: { open?: boolean }) => {
+    await cmdResume(tag, opts);
   });
 
 program

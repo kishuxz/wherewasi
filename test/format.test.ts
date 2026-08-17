@@ -308,3 +308,29 @@ describe("keylessGuidance", () => {
     }
   });
 });
+
+describe("tags in output", () => {
+  const tagged = (tag: string, over: Partial<Session> = {}): Session => ({ ...base, tag, ...over });
+
+  it("names the tag in the resume header", () => {
+    expect(formatResume(tagged("token-refresh"), opts)).toContain(
+      "2 hours ago · fix/session-expiry · token-refresh",
+    );
+  });
+
+  it("leaves the header alone when untagged", () => {
+    const out = formatResume(base, opts);
+    expect(out).toContain("2 hours ago · fix/session-expiry");
+    expect(out).not.toContain(" ·  ");
+  });
+
+  it("shows a TAG column in list once anything is tagged", () => {
+    const out = formatList([tagged("token-refresh"), base], opts);
+    expect(out).toContain("TAG");
+    expect(out).toContain("token-refresh");
+  });
+
+  it("omits the TAG column entirely when nothing is tagged", () => {
+    expect(formatList([base], opts)).not.toContain("TAG");
+  });
+});

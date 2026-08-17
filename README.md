@@ -154,7 +154,7 @@ There is no config file, and there won't be. `.env` is not loaded automatically 
 
 ## Commands
 
-### `wherewasi pause [note] [--since <when>]`
+### `wherewasi pause [note] [--since <when>] [--tag <name>]`
 
 Captures, in order:
 
@@ -173,9 +173,31 @@ The highest-signal invocation pipes a failure in:
 pnpm test 2>&1 | wherewasi pause "auth failing"
 ```
 
-### `wherewasi resume [--open]`
+### `wherewasi resume [tag] [--open]`
 
 Prints the most recent pause: summary, hypothesis, ruled-out list, working set with reasons, next step, and how long ago. `--open` opens the working set in `$EDITOR`, skipping files that no longer exist.
+
+### Several investigations at once
+
+Parallel agents and worktrees mean one repo often has more than one thing in flight. Tag a pause and ask for it back by name:
+
+```sh
+wherewasi pause --tag token-refresh "the refresh never fires"
+wherewasi pause --tag grid-layout   "collapses under 400px"
+
+wherewasi resume token-refresh
+```
+
+```console
+$ wherewasi list
+
+  WHEN      BRANCH  TAG            SUMMARY
+  just now  main                   (no analysis) untagged, just stepping away
+  just now  main    grid-layout    (no analysis) the grid collapses at 400px
+  just now  main    token-refresh  (no analysis) chasing the refresh
+```
+
+A tagged pause anchors its file scan to your last pause **with the same tag**. Anchoring to the globally-latest pause would be wrong here — it belongs to the other investigation, and would give this one a window far too short. Asking for a tag that does not exist tells you which ones do.
 
 ### `wherewasi list`
 

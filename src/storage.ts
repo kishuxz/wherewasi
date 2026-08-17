@@ -27,7 +27,7 @@ export function fileNameFor(savedAt: string): string {
 
 export async function saveSession(
   state: CapturedState,
-  extra: Pick<Session, "analysis" | "analysisError" | "trigger">,
+  extra: Pick<Session, "analysis" | "analysisError" | "trigger" | "tag">,
   opts: { home?: string; now?: Date } = {},
 ): Promise<{ session: Session; file: string }> {
   const home = opts.home ?? homedir();
@@ -103,12 +103,24 @@ export async function hasAnySession(home = homedir()): Promise<boolean> {
 
 export async function latestSession(
   repoPath: string,
-  opts: { home?: string } = {},
+  opts: { home?: string; tag?: string } = {},
 ): Promise<Session | null> {
   const files = await listFiles(repoPath, opts.home ?? homedir());
   for (const file of files) {
     const session = await readSession(file);
-    if (session) return session;
+    if (!session) continue;
+    if (opts.tag !== undefined && session.tag !== opts.tag) continue;
+    return session;
   }
   return null;
+}
+
+/** Distinct tags in use for this repo, most recently used first. */
+export async function listTags(repoPath: string, opts: { home?: string } = {}): Promise<string[]> {
+  const sessions = await listSessions(repoPath, opts);
+  const seen: string[] = [];
+  for (const s of sessions) {
+    if (s.tag && !seen.includes(s.tag)) seen.push(s.tag);
+  }
+  return seen;
 }
