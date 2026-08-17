@@ -19,6 +19,16 @@ interface ChatCompletionResponse {
   error?: { message?: string; type?: string };
 }
 
+/**
+ * A completion cut off at the token cap still arrives as valid JSON under
+ * response_format=json_object — the server closes the braces for you. The
+ * result parses cleanly and is garbage: truncated strings, fields split across
+ * array elements, an empty next_step. Without this check that garbage gets
+ * stored as if it were a real analysis.
+ */
+const TRUNCATED_COMPLETION =
+  "the model ran out of output budget mid-answer (raise MAX_TOKENS or shorten the input)";
+
 export class GroqProvider implements Provider {
   readonly name = "groq" as const;
   readonly model: string;
@@ -89,6 +99,9 @@ export class GroqProvider implements Provider {
     const text = choice?.message?.content ?? "";
     if (!text.trim()) {
       throw new ProviderError("Groq returned an empty completion", "http", response.status);
+    }
+    if (choice?.finish_reason === "length") {
+      throw new ProviderError(TRUNCATED_COMPLETION, "http", response.status);
     }
 
     return { text, model: body.model ?? this.model };

@@ -9,36 +9,38 @@ import type { Analysis, CapturedState } from "./types.js";
  */
 const MAX_TOKENS = 2500;
 
-const SYSTEM = `You are writing a note to a developer who was interrupted an hour ago and has just sat back down. They can already see their own diff. Your note has to supply the one thing the diff cannot: what problem they were in the middle of solving.
+const SYSTEM = `You are writing a note to a developer who was interrupted an hour ago and has just sat back down. They can already see their diff. Supply the one thing it cannot: the problem they were solving.
 
-THE DIFF IS EVIDENCE, NOT THE SUBJECT.
-Treat every change as a clue about a goal that is never stated anywhere. The edits are the footprints; you are describing where the person was walking, not the shape of the footprints. If a sentence you write would still be true if you had only read the diff and understood nothing about the problem, delete it.
+THE DIFF IS EVIDENCE, NOT THE SUBJECT. Edits are footprints; describe where the person was walking, not the shape of the prints. If a sentence would still be true having read only the diff and understood nothing of the problem, delete it.
 
-The central question is: WHY ARE THESE PARTICULAR FILES OPEN TOGETHER? A rename in one package, a debug print in another, and a failing test in a third are not three tasks — they are almost always one investigation. Name that investigation. If the note the developer typed states a problem, that problem is the goal, and every edit should be explained as a move toward it — not the other way round. Never claim an edit was made "to accommodate" or "in order to enable" another edit unless the evidence actually shows that dependency.
+Ask: WHY ARE THESE FILES OPEN TOGETHER? A rename here, a debug print there, a failing test elsewhere are one investigation, not three tasks. Name it. If the developer's note states a problem, that is the goal and every edit is a move toward it — never the reverse. Do not claim an edit exists "to accommodate" another unless the evidence shows that dependency.
 
-FIELD RULES
+Examples below use an unrelated imaginary project (a PDF exporter) to show FORM only. Never reuse their wording, subject or nouns. If your answer mentions PDFs, pagination or fonts you have copied the example instead of reading the evidence — start over from the actual repository.
 
-The illustrations below use an unrelated imaginary project (a PDF exporter) purely to show the FORM of a good answer. Never reuse their wording, their subject matter, or their nouns. If your answer mentions PDFs, pagination, or fonts, you have copied the illustration instead of reading the evidence — start over from the actual repository in front of you.
+summary — max 3 sentences, second person, begins "You were". First sentence names the PROBLEM. Do not list what changed; no refactors, renames or filenames in it. Bad: "You were renaming renderPage to renderSheet across the exporter." Good: "You were chasing why long documents lose their last page on export."
 
-summary — at most 3 sentences, second person, begins "You were". The first sentence must name the PROBLEM, not the edits. Do not list what changed; do not name refactors, renames, or files in the first sentence. Form — bad: "You were renaming renderPage to renderSheet across the exporter and its tests." Form — good: "You were chasing why long documents lose their last page on export."
+hypothesis — second person, the specific falsifiable belief being tested, stating the suspected mechanism. Bad: "You were improving pagination handling." Good: "You suspected the page counter is computed before the final flush, so the last buffer is never counted." Do not restate edits.
 
-hypothesis — second person. The specific, falsifiable belief they were testing: something that could turn out to be wrong. State the suspected mechanism. Form — bad: "You were improving the pagination handling." Form — good: "You suspected the page counter is computed before the final flush, so the last buffer never gets counted." Do not restate the edits here.
-
-ruled_out — what the evidence shows they already ELIMINATED. This is the highest-risk field: the developer will trust it and skip that suspect. A wrong entry costs them the hour you are trying to save.
-  Each entry must point to evidence of abandonment: code deleted in the diff, an approach reverted in the recent commits, a commented-out block, a debug line removed, or the note saying something did not work.
-  These are NOT eliminations — never emit them:
+ruled_out — candidate CAUSES of the problem that were tried and dismissed. Highest-risk field: a wrong entry makes them skip a live suspect. Every entry needs evidence of an abandoned attempt — code deleted, an approach reverted, a commented-out block, a removed debug line, or the note saying something failed.
+  These are NOT eliminations, however reasonable they sound:
     * work still outstanding ("guard has not been updated yet")
-    * the change itself relabelled ("keeping the old name" when they renamed it)
-    * anything you inferred only because it seems plausible
-  If you cannot point to the specific evidence of abandonment, return []. An empty array is a correct and common answer. Returning [] is strictly better than guessing.
+    * work they COMPLETED — a finished rename, migration or cleanup is not a dismissed cause, even if you can argue it removes one
+    * the change itself restated as a cause that was excluded
+    * anything merely plausible
+  Ask of each entry: did they try this as a fix for the problem and reject it? If not, drop it. Without evidence of a rejected attempt return []. Empty is common, correct, and strictly better than guessing.
 
-working_set — the files that matter to the hypothesis, not simply the files that changed. Include a file that is central to the problem even if it has no edits, and say why it matters to the investigation rather than what was changed in it. Each entry exactly \`path — clause\`, using a real path (never a glob or a directory wildcard). Most important first.
+working_set — exactly two kinds of file:
+  1. Files that matter to the hypothesis. Say why they matter to the investigation, not what changed in them.
+  2. BLOCKERS — anything the evidence shows is stopping the next step: a file that fails to compile, the source of a failing test, an export something still imports under its old name. Include these even if unrelated to the hypothesis and even if never edited; a file that fails to build is load-bearing regardless. If the captured output contains an error, the file it names is a blocker. Name the blocker in the clause, not just the file.
+  Each entry exactly \`path — clause\`. The path must be one literal file copied from the evidence — for a blocker, the exact path the error or stack trace names. Never a glob, a wildcard, a directory, or a pattern containing * or **. Blockers first.
 
-next_step — the single concrete action to take right now, phrased as an instruction. It must be executable without further decisions.
+next_step — one concrete instruction, executable without further decisions. If a blocker exists, clearing it IS the next step; never tell them to run something that cannot currently run.
 
-Prefer honest uncertainty to confident invention: "you appeared to be", "the evidence suggests". If the evidence does not reveal the goal, say that plainly in the summary rather than inventing one.
+Blockers appear in working_set and next_step ONLY — never in summary or hypothesis, which describe the problem, not the obstacle. A broken build is not what they were thinking about.
 
-Respond with a single JSON object and nothing else — no prose, no markdown fences. Shape:
+Prefer honest uncertainty to invention. If the evidence does not reveal the goal, say so in the summary rather than inventing one.
+
+Respond with one JSON object, no prose, no fences:
 {"summary": string, "hypothesis": string, "ruled_out": string[], "working_set": string[], "next_step": string}`;
 
 export const SYSTEM_PROMPT = SYSTEM;
@@ -119,6 +121,18 @@ export function parseAnalysis(text: string): Analysis {
   return analysis;
 }
 
+/**
+ * Small models reproduce the prompt's worked examples verbatim instead of
+ * reasoning, and the result is fluent, well-formed and about the wrong
+ * software entirely. The examples are deliberately from an unrelated domain so
+ * this is obvious to a human, but nothing was catching it automatically.
+ */
+export function copiedFromPrompt(analysis: Analysis): boolean {
+  return [analysis.summary, analysis.hypothesis].some(
+    (field) => field.length > 20 && SYSTEM.includes(field),
+  );
+}
+
 export interface AnalyzeResult {
   analysis: Analysis | null;
   error: string | null;
@@ -156,7 +170,15 @@ export async function analyze(
       user: buildPrompt(state),
       maxTokens: MAX_TOKENS,
     });
-    return { analysis: parseAnalysis(result.text), error: null, model: result.model };
+    const analysis = parseAnalysis(result.text);
+    if (copiedFromPrompt(analysis)) {
+      return {
+        analysis: null,
+        error: `${result.model} returned a prompt example verbatim instead of analyzing the repository — use a larger model`,
+        model: result.model,
+      };
+    }
+    return { analysis, error: null, model: result.model };
   } catch (err) {
     if (err instanceof ProviderError) {
       // Rate limiting is the expected failure on a free tier, so say so plainly

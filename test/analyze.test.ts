@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyze, buildPrompt, parseAnalysis } from "../src/analyze.js";
+import { analyze, buildPrompt, copiedFromPrompt, parseAnalysis } from "../src/analyze.js";
 import type { CapturedState } from "../src/types.js";
 
 const state: CapturedState = {
@@ -104,5 +104,33 @@ describe("analyze without a key", () => {
     expect(result.analysis).toBeNull();
     expect(result.error).toMatch(/GROQ_API_KEY or ANTHROPIC_API_KEY/);
     expect(result.model).toBeNull();
+  });
+});
+
+describe("prompt-example contamination", () => {
+  it("flags a summary lifted verbatim from the prompt's worked examples", () => {
+    // Observed live: llama-3.1-8b-instant returned this exact sentence, which
+    // is an illustration in the system prompt about an unrelated project.
+    expect(
+      copiedFromPrompt({
+        summary: "You were chasing why long documents lose their last page on export.",
+        hypothesis: "something original",
+        ruled_out: [],
+        working_set: [],
+        next_step: "do a thing",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not flag genuine analysis", () => {
+    expect(
+      copiedFromPrompt({
+        summary: "You were investigating why the collector's sink token expires mid-run.",
+        hypothesis: "You suspect refreshSinkToken only updates a timestamp.",
+        ruled_out: [],
+        working_set: [],
+        next_step: "Update guard to import evaluateRun.",
+      }),
+    ).toBe(false);
   });
 });
