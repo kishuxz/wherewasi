@@ -29,7 +29,7 @@ describe("prompt construction", () => {
     expect(prompt).toContain("<recent_commits>");
     expect(prompt).toContain("<working_tree_status>");
     expect(prompt).toContain("<unstaged_diff>");
-    expect(prompt).toContain("<files_modified_in_last_2_hours>");
+    expect(prompt).toContain("<recently_touched_files>");
     expect(prompt).toContain("FAIL src/auth.test.ts");
     expect(prompt).toContain("fix/session-expiry");
   });
