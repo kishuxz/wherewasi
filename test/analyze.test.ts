@@ -78,17 +78,23 @@ describe("parseAnalysis", () => {
     );
   });
 
-  it("coerces missing or wrongly-typed optional fields", () => {
+  it("fills in a missing optional string field", () => {
     const result = parseAnalysis(
-      JSON.stringify({
-        summary: "You were debugging.",
-        ruled_out: "nope",
-        working_set: [1, "a.ts"],
-      }),
+      JSON.stringify({ summary: "You were debugging.", next_step: "Run the tests." }),
     );
     expect(result.hypothesis).toBe("");
     expect(result.ruled_out).toEqual([]);
-    expect(result.working_set).toEqual(["a.ts"]);
+  });
+
+  it("rejects wrongly-typed arrays instead of quietly salvaging them", () => {
+    // Silently dropping a bad member hides that the model returned the wrong
+    // shape, and half a bad answer still reaches the user as a whole one.
+    expect(() => parseAnalysis(JSON.stringify({ summary: "x", ruled_out: "nope" }))).toThrow(
+      /ruled_out was not an array/,
+    );
+    expect(() => parseAnalysis(JSON.stringify({ summary: "x", working_set: [1, "a.ts"] }))).toThrow(
+      /working_set contained a non-string/,
+    );
   });
 
   it("throws when there is no object or no summary", () => {

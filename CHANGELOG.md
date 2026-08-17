@@ -30,6 +30,7 @@ First release.
 - **Secret redaction** applied to the diff, your note and any piped output — before the network call and again before the file is written, so it holds on the keyless path too. Covers `sk-`/`sk_` keys, `gh*_` and `github_pat_` tokens, AWS access key IDs, `Bearer` tokens, and `password`/`secret`/`token`/`api_key` assignments.
 - **Bulk-edit detection.** Files written together in a burst — a codemod, a formatter, an agent — are tagged so the model weights them below files you touched individually.
 - **Truncation is visible.** `resume` says when a diff was cut at the cap and that the working set may be incomplete, rather than presenting a partial view as a complete one.
+- **Semantic validation of the analysis.** Parsing checked that a response was shaped like an analysis, not that it meant anything, and three failures reached users through that gap. Output is now rejected when `summary`, `hypothesis` or `next_step` is empty, when a `working_set` entry contains a JSON fragment the model serialised into its own answer, or when an entry holds a glob or prose where a file path belongs. Rejection degrades exactly like the other guards: raw state stored, reason named, nothing corrupt persisted.
 - **Prompt-contamination guard.** An analysis reproducing one of the system prompt's worked examples verbatim is rejected with a message naming the model, instead of being stored as a confident analysis of software that does not exist.
 
 ### Notes

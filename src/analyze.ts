@@ -1,3 +1,4 @@
+import { splitWorkingSetEntry } from "./format.js";
 import { redact } from "./redact.js";
 import { ProviderError, selectProvider } from "./providers/index.js";
 import type { Provider, ProviderEnv } from "./providers/index.js";
@@ -151,24 +152,81 @@ export function parseAnalysis(text: string): Analysis {
 
   const raw = JSON.parse(candidate) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
-  const arr = (v: unknown): string[] =>
-    Array.isArray(v)
-      ? v
-          .filter((x): x is string => typeof x === "string")
-          .map((x) => x.trim())
-          .filter(Boolean)
-      : [];
+  // Strict, not lenient: a non-string member means the model produced
+  // something other than the requested shape, and silently dropping it hides
+  // that. Better to reject the whole answer than to keep half of a bad one.
+  const arr = (v: unknown, field: string): string[] => {
+    if (v === undefined || v === null) return [];
+    if (!Array.isArray(v)) throw new Error(`${field} was not an array`);
+    for (const x of v) {
+      if (typeof x !== "string") throw new Error(`${field} contained a non-string entry`);
+    }
+    return v.map((x) => (x as string).trim()).filter(Boolean);
+  };
 
   const analysis: Analysis = {
     summary: str(raw["summary"]),
     hypothesis: str(raw["hypothesis"]),
-    ruled_out: arr(raw["ruled_out"]),
-    working_set: arr(raw["working_set"]),
+    ruled_out: arr(raw["ruled_out"], "ruled_out"),
+    working_set: arr(raw["working_set"], "working_set"),
     next_step: str(raw["next_step"]),
   };
 
   if (!analysis.summary) throw new Error("model response had no summary");
   return analysis;
+}
+
+/** Tells that a model serialised part of its own JSON into a string. */
+const JSON_FRAGMENT = /","|"\]|":"|"\}|\\"/;
+
+/** Longer than any real repo-relative path anyone actually has. */
+const MAX_PATH_CHARS = 200;
+
+/**
+ * Checks that a parsed analysis means something, not merely that it is shaped
+ * like one.
+ *
+ * Three failures have reached users' terminals through the shape check:
+ * truncated completions, verbatim prompt copying, and a `working_set` whose
+ * tail the model serialised into its first element. The first two are guarded
+ * elsewhere; this covers the third and the family it belongs to.
+ *
+ * Returns a human-readable reason, or null when the analysis is usable.
+ */
+export function validateAnalysis(analysis: Analysis): string | null {
+  for (const [field, value] of [
+    ["summary", analysis.summary],
+    ["hypothesis", analysis.hypothesis],
+    ["next_step", analysis.next_step],
+  ] as const) {
+    if (!value.trim()) return `${field} was empty — the prompt requires it`;
+  }
+
+  for (const entry of analysis.working_set) {
+    if (JSON_FRAGMENT.test(entry)) {
+      return "working_set contained a JSON fragment — the model serialised part of its own response into an entry";
+    }
+
+    const { path } = splitWorkingSetEntry(entry);
+    if (!path) return "working_set contained an entry with no file path";
+    if (path.length > MAX_PATH_CHARS) {
+      return `working_set contained a ${path.length}-character path, which is prose rather than a file`;
+    }
+    if (/[*?]/.test(path)) {
+      return `working_set contained a glob (${path}) — resume --open cannot open a pattern`;
+    }
+    if (/[:\n]/.test(path)) {
+      return `working_set contained an unusable path (${path.slice(0, 40)})`;
+    }
+    // Prose sneaks through as a path when the model drops the `path — reason`
+    // form. A real path is either a single token or contains a separator or an
+    // extension; a sentence is none of those.
+    if (/\s/.test(path) && !path.includes("/") && !/\.\w{1,6}$/.test(path)) {
+      return `working_set contained prose where a path belongs (${path.slice(0, 40)}…)`;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -223,6 +281,14 @@ export async function analyze(
       maxTokens: MAX_TOKENS,
     });
     const analysis = parseAnalysis(result.text);
+    const invalid = validateAnalysis(analysis);
+    if (invalid) {
+      return {
+        analysis: null,
+        error: `${result.model} returned an unusable analysis — ${invalid}`,
+        model: result.model,
+      };
+    }
     if (copiedFromPrompt(analysis)) {
       return {
         analysis: null,

@@ -445,7 +445,7 @@ If it isn’t `pause`, `resume`, `list` or `status`, it isn’t in here.
 
 ```sh
 pnpm install
-pnpm test        # 218 tests: capture, storage, redaction, formatting, hooks, transcripts, status, both provider wire formats
+pnpm test        # 239 tests: capture, storage, redaction, formatting, hooks, transcripts, status, validation, both provider wire formats
 pnpm build
 ```
 

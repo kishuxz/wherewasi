@@ -1,0 +1,12 @@
+{
+  "summary": "You were fixing the collector’s expiring sink token handling while also renaming the core evaluation API to evaluateRun.",
+  "hypothesis": "You suspected that the sink token is being reused past its maximum age, causing failures, so adding an age check and refresh will keep the token valid, and renaming evaluate to evaluateRun clarifies its purpose.",
+  "ruled_out": [],
+  "working_set": [
+    "packages/collector/src/index.ts — contains the new token‑age check and refresh logic for the sink token\",\"packages/core/src/index.ts — renamed the exported function to evaluateRun\",\"packages/cli/src/index.ts — updated CLI to call evaluateRun\",\"packages/core/src/evaluate.test.ts — updated test to use evaluateRun\"],\"next_step",
+    ":",
+    "Search the repository for any remaining imports of evaluate and replace them with evaluateRun",
+    "then run the full test suite to confirm all passes."
+  ],
+  "next_step": ""
+}
