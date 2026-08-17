@@ -5,6 +5,8 @@ import path from "node:path";
 import {
   MARKER,
   SHELLS,
+  DEBUG_ENV,
+  debugLine,
   detectShell,
   fishQuote,
   hookPath,
@@ -56,7 +58,7 @@ describe("postCheckoutHook", () => {
   });
 
   it("ignores file checkouts, which are not context switches", () => {
-    expect(hook).toContain('[ "$3" = "1" ] || exit 0');
+    expect(hook).toContain('if [ "$3" != "1" ]; then');
   });
 
   it("skips the checkout that ends a clone, matching zeros of any SHA length", () => {
@@ -71,6 +73,26 @@ describe("postCheckoutHook", () => {
 
   it("always exits 0 so a checkout can never be failed by it", () => {
     expect(hook.trimEnd().endsWith("exit 0")).toBe(true);
+  });
+
+  it("traces before the guards, so a wrong skip is not silence", () => {
+    // The `git checkout -b` bug survived because a guard declining looked
+    // identical to the hook never running.
+    const trace = hook.indexOf("post-checkout $1 -> $2");
+    const firstGuard = hook.indexOf('[ "$3" != "1" ]');
+    expect(trace).toBeGreaterThan(-1);
+    expect(trace).toBeLessThan(firstGuard);
+  });
+
+  it("names the reason on every early exit", () => {
+    expect(hook).toContain("skipped: file checkout");
+    expect(hook).toContain("skipped: previous HEAD is all zeros");
+  });
+
+  it("runs in the foreground under WHEREWASI_DEBUG, detached otherwise", () => {
+    expect(hook).toContain(`[ -n "\${${DEBUG_ENV}:-}" ]`);
+    expect(hook).toContain(debugLine(NODE, CLI));
+    expect(hook).toContain(launchLine(NODE, CLI));
   });
 });
 
@@ -115,6 +137,18 @@ describe("shellSnippet", () => {
     for (const shell of SHELLS) {
       expect(shellSnippet(shell, NODE, CLI)).toContain("nohup");
     }
+  });
+
+  it("offers a foreground debug path in every shell", () => {
+    for (const shell of SHELLS) {
+      const snippet = shellSnippet(shell, NODE, CLI);
+      expect(snippet).toContain(DEBUG_ENV);
+      expect(snippet).toContain(debugLine(NODE, CLI));
+    }
+  });
+
+  it("uses fish's own test for the variable, not POSIX syntax", () => {
+    expect(shellSnippet("fish", NODE, CLI)).toContain(`set -q ${DEBUG_ENV}`);
   });
 });
 

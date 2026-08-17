@@ -18,6 +18,7 @@ import {
   splitWorkingSetEntry,
 } from "./format.js";
 import {
+  DEBUG_ENV,
   SHELLS,
   detectShell,
   hookPath,
@@ -40,6 +41,19 @@ const STDIN_WAIT_MS = 3000;
  * Deliberate `pause` is never debounced.
  */
 const AUTO_MIN_INTERVAL_MS = 2 * 60_000;
+
+/**
+ * Automatic capture is fail-silent by design, which is right for users and is
+ * also how three real bugs survived development. WHEREWASI_DEBUG turns every
+ * silent path loud. Written to stderr so it never contaminates stdout.
+ */
+function debugging(env: Record<string, string | undefined> = process.env): boolean {
+  return Boolean(env[DEBUG_ENV]);
+}
+
+function debug(message: string): void {
+  if (debugging()) process.stderr.write(`wherewasi: ${message}\n`);
+}
 
 /**
  * Single source of truth for the version. `dist/cli.js` and `src/cli.ts` are
@@ -150,6 +164,12 @@ async function cmdPause(
       // Debounced before any work is done, so a burst of triggers costs a
       // directory read rather than a capture and a network call.
       if (opts.auto && started - new Date(previous.savedAt).getTime() < AUTO_MIN_INTERVAL_MS) {
+        const ago = Math.round((started - new Date(previous.savedAt).getTime()) / 1000);
+        // The most confusing "the hook is not firing" case is the one where it
+        // fired correctly and declined.
+        debug(
+          `skipped: last pause for this repo was ${ago}s ago, under the ${AUTO_MIN_INTERVAL_MS / 1000}s auto floor`,
+        );
         return;
       }
       since = new Date(previous.savedAt);
@@ -202,6 +222,11 @@ async function cmdPause(
   });
 
   const totalMs = Date.now() - started;
+  if (opts.auto) {
+    debug(`captured ${stored.recentFiles.length} file(s) on ${stored.git.branch || "no branch"}`);
+    if (error) debug(`analysis failed: ${error}`);
+    debug(`wrote ${file}`);
+  }
   say("\n");
 
   if (analysis) {
@@ -460,6 +485,13 @@ program
 program.parseAsync(process.argv).catch((err: unknown) => {
   // An automatic capture must never fail the command that triggered it. A
   // non-zero exit from a post-checkout hook is noise in someone's git output.
-  if (process.argv.includes("--auto")) process.exit(0);
+  if (process.argv.includes("--auto")) {
+    if (debugging()) {
+      process.stderr.write(
+        `wherewasi: capture threw — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+      );
+    }
+    process.exit(0);
+  }
   fail(err instanceof Error ? err.message : String(err));
 });

@@ -8,7 +8,7 @@ Node 20+ and pnpm.
 
 ```sh
 pnpm install
-pnpm test                            # 153 tests, ~700ms, no network
+pnpm test                            # 163 tests, ~700ms, no network
 pnpm dev pause "trying something"    # run the CLI from source
 pnpm dev resume
 ```
@@ -37,6 +37,38 @@ To exercise a real model, point it at a local one and spend nothing:
 ollama pull qwen2.5:7b
 WHEREWASI_BASE_URL=http://localhost:11434/v1 WHEREWASI_MODEL=qwen2.5:7b pnpm dev pause "note"
 ```
+
+## When a hook is not firing, set `WHEREWASI_DEBUG`
+
+Do this first. Automatic capture discards its output on purpose — an error printed into someone's `git checkout` is worse than a capture that did not run — so every failure looks identical to nothing happening. `WHEREWASI_DEBUG` turns all of it loud:
+
+```sh
+WHEREWASI_DEBUG=1 git checkout some-branch
+```
+
+```
+wherewasi: post-checkout a4d77a2f… -> a4d77a2f… (branch-checkout=1)
+wherewasi: skipped: last pause for this repo was 2s ago, under the 120s auto floor
+wherewasi: capture exited 0
+```
+
+It is read at run time by the hook and the shell snippets, so you do not reinstall anything to use it. That matters: it switches the capture from detached-and-discarded to **foreground with output attached**, which is the only way to see a failure that happens before the process can report on itself. A flag checked only inside the CLI would miss most of what goes wrong here.
+
+What it reports:
+
+| situation                       | what you see                                                       |
+| ------------------------------- | ------------------------------------------------------------------ |
+| hook fired at all               | the trace line, with both HEADs and the branch-checkout flag       |
+| a guard declined                | `skipped: file checkout…` / `skipped: previous HEAD is all zeros…` |
+| debounced                       | `skipped: last pause … under the 120s auto floor`                  |
+| capture ran                     | files captured, branch, and the session path written               |
+| analysis failed                 | the provider error verbatim                                        |
+| capture threw                   | the error and its stack                                            |
+| the binary could not even start | your shell's own error, plus `capture exited 126`                  |
+
+The last two rows are the point. Three real bugs shipped in the first cut of this feature — an `EACCES` on every capture, `git checkout -b` silently skipped, and an `index.lock` collision — and all three were invisible until instrumented by hand. Two of them happened _before_ node started or without invoking it at all, so anything that only changed behaviour inside the CLI would not have found them.
+
+`WHEREWASI_DEBUG` never changes the contract: the hook still exits 0, and `pause --auto` still exits 0.
 
 ## The convention
 

@@ -34,6 +34,24 @@ export function launchLine(nodePath: string, cliPath: string): string {
   return `( nohup ${shQuote(nodePath)} ${shQuote(cliPath)} pause --auto >/dev/null 2>&1 & )`;
 }
 
+/** Environment variable that turns every silent path into a loud one. */
+export const DEBUG_ENV = "WHEREWASI_DEBUG";
+
+/**
+ * Foreground, output attached — the opposite of `launchLine` in every respect
+ * that matters for diagnosis.
+ *
+ * A debug switch read only inside the node process would be useless here. The
+ * two worst bugs this integration has had were an EACCES before node started
+ * and a guard that never invoked node at all; in both cases the process that
+ * would honour such a flag never ran, and the hook discarded the evidence.
+ * Checked at run time rather than baked in at install, so
+ * `WHEREWASI_DEBUG=1 git checkout other` works without reinstalling.
+ */
+export function debugLine(nodePath: string, cliPath: string): string {
+  return `${shQuote(nodePath)} ${shQuote(cliPath)} pause --auto`;
+}
+
 /**
  * POSIX single-quoting. Inside single quotes the shell expands nothing, so a
  * path containing `$`, a backtick or a space is safe. Double quotes — which is
@@ -58,8 +76,21 @@ export function postCheckoutHook(nodePath: string, cliPath: string): string {
 # post-checkout receives: $1 previous HEAD, $2 new HEAD, $3 1 if this was a
 # branch checkout and 0 if it was a file checkout.
 
+wwi_debug() {
+  [ -n "\${${DEBUG_ENV}:-}" ] && echo "wherewasi: $1" >&2
+  return 0
+}
+
+# Traced before the guards, not after. A guard that wrongly declines is
+# indistinguishable from a hook that never ran unless the skip says so — which
+# is exactly how the \`git checkout -b\` case stayed hidden.
+wwi_debug "post-checkout $1 -> $2 (branch-checkout=$3)"
+
 # File checkouts (\`git checkout -- path\`) are not context switches.
-[ "$3" = "1" ] || exit 0
+if [ "$3" != "1" ]; then
+  wwi_debug "skipped: file checkout, not a branch checkout"
+  exit 0
+fi
 
 # The checkout that ends \`git clone\` reports an all-zero previous HEAD. There
 # is no prior context in a repo you just cloned, so skip it. Matched as
@@ -71,10 +102,20 @@ export function postCheckoutHook(nodePath: string, cliPath: string): string {
 # debounce in \`pause --auto\`, not here.
 case "$1" in
   *[!0]*) ;;
-  *) exit 0 ;;
+  *)
+    wwi_debug "skipped: previous HEAD is all zeros, this is the checkout ending a clone"
+    exit 0
+    ;;
 esac
 
-${launchLine(nodePath, cliPath)}
+if [ -n "\${${DEBUG_ENV}:-}" ]; then
+  # Foreground, output attached. The only way to see a capture that dies before
+  # it can report anything — which is what the normal path is built to hide.
+  ${debugLine(nodePath, cliPath)}
+  echo "wherewasi: capture exited $?" >&2
+else
+  ${launchLine(nodePath, cliPath)}
+fi
 
 # Never fail the checkout, whatever happened above.
 exit 0
@@ -97,7 +138,11 @@ export function shellSnippet(shell: Shell, nodePath: string, cliPath: string): s
 #   wherewasi shell-init fish | source
 
 function __wherewasi_auto_capture --on-event fish_exit
-    command sh -c ${fishQuote(launch)}
+    if set -q ${DEBUG_ENV}
+        command ${debugLine(nodePath, cliPath)}
+    else
+        command sh -c ${fishQuote(launch)}
+    end
 end
 `;
   }
@@ -110,7 +155,12 @@ end
 #   eval "$(wherewasi shell-init ${shell})"
 
 __wherewasi_auto_capture() {
-  ${launch}
+  if [ -n "\${${DEBUG_ENV}:-}" ]; then
+    ${debugLine(nodePath, cliPath)}
+    echo "wherewasi: capture exited $?" >&2
+  else
+    ${launch}
+  fi
 }
 trap __wherewasi_auto_capture EXIT
 `;

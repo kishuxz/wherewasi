@@ -362,7 +362,7 @@ If it isn't `pause`, `resume`, or `list`, it isn't in here.
 
 ```sh
 pnpm install
-pnpm test        # 153 tests: capture, storage, redaction, formatting, hooks, both provider wire formats
+pnpm test        # 163 tests: capture, storage, redaction, formatting, hooks, both provider wire formats
 pnpm build
 ```
 
