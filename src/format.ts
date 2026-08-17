@@ -144,8 +144,11 @@ export function formatResume(
 
   const when = relativeTime(session.savedAt, now);
   const branch = session.git.branch || "(no branch)";
+  // With several investigations in one repo, which one you got back is the
+  // first thing you need to know.
+  const label = session.tag ? `${when} · ${branch} · ${session.tag}` : `${when} · ${branch}`;
   out.push("");
-  out.push(`${paint("← where you were", "bold", "cyan")}  ${paint(`${when} · ${branch}`, "dim")}`);
+  out.push(`${paint("← where you were", "bold", "cyan")}  ${paint(label, "dim")}`);
   out.push("");
 
   const a = session.analysis;
@@ -329,12 +332,19 @@ export function formatList(
       // Automatic captures outnumber deliberate ones, so the deliberate ones
       // have to stay findable.
       auto: s.trigger === "auto",
+      tag: s.tag ?? "",
     };
   });
 
-  const w = (key: "when" | "branch") => Math.max(key.length, ...rows.map((r) => r[key].length));
+  const w = (key: "when" | "branch" | "tag") =>
+    Math.max(key.length, ...rows.map((r) => r[key].length));
   const whenW = Math.min(w("when"), 18);
   const branchW = Math.min(w("branch"), 24);
+
+  // The column appears only once something is tagged, so an untagged history
+  // looks exactly as it did before.
+  const anyTag = rows.some((r) => r.tag);
+  const tagW = Math.min(w("tag"), 16);
 
   const clip = (text: string, width: number) =>
     text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width);
@@ -344,13 +354,16 @@ export function formatList(
   // manual history looks exactly as it did before.
   const mark = (auto: boolean) => (anyAuto ? (auto ? `${paint("⟳", "dim")} ` : "  ") : "");
 
+  const tagCol = (text: string, color: boolean) =>
+    anyTag ? `${color ? paint(clip(text, tagW), "yellow") : paint(clip(text, tagW), "dim")}  ` : "";
+
   const out: string[] = [""];
   out.push(
-    `  ${paint(clip("WHEN", whenW), "dim")}  ${paint(clip("BRANCH", branchW), "dim")}  ${anyAuto ? "  " : ""}${paint("SUMMARY", "dim")}`,
+    `  ${paint(clip("WHEN", whenW), "dim")}  ${paint(clip("BRANCH", branchW), "dim")}  ${tagCol("TAG", false)}${anyAuto ? "  " : ""}${paint("SUMMARY", "dim")}`,
   );
   for (const r of rows) {
     out.push(
-      `  ${clip(r.when, whenW)}  ${paint(clip(r.branch, branchW), "cyan")}  ${mark(r.auto)}${clip(r.summary, 60).trimEnd()}`,
+      `  ${clip(r.when, whenW)}  ${paint(clip(r.branch, branchW), "cyan")}  ${tagCol(r.tag, true)}${mark(r.auto)}${clip(r.summary, 60).trimEnd()}`,
     );
   }
   if (anyAuto) {

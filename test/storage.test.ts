@@ -5,6 +5,7 @@ import {
   fileNameFor,
   hasAnySession,
   latestSession,
+  listTags,
   listSessions,
   repoKey,
   sessionsDir,
@@ -223,5 +224,58 @@ describe("hasAnySession", () => {
     await mkdir(bucket, { recursive: true });
     await writeFile(path.join(bucket, "README.txt"), "not a session", "utf8");
     expect(await hasAnySession(home.dir)).toBe(false);
+  });
+});
+
+describe("tags", () => {
+  let home: { dir: string; cleanup: () => Promise<void> };
+  const repo = "/Users/dev/projects/alpha";
+  const save = (tag: string | undefined, minute: number) =>
+    saveSession(
+      state(repo),
+      { analysis, analysisError: null, ...(tag ? { tag } : {}) },
+      { home: home.dir, now: new Date(`2026-01-15T12:${String(minute).padStart(2, "0")}:00.000Z`) },
+    );
+
+  beforeEach(async () => {
+    home = await tempHome();
+  });
+  afterEach(async () => {
+    await home.cleanup();
+  });
+
+  it("returns the newest pause carrying the tag, not the newest overall", async () => {
+    await save("refresh", 1);
+    await save("layout", 2);
+    await save("refresh", 3);
+    await save("layout", 4);
+
+    const refresh = await latestSession(repo, { home: home.dir, tag: "refresh" });
+    expect(refresh?.savedAt).toBe("2026-01-15T12:03:00.000Z");
+    expect(refresh?.tag).toBe("refresh");
+  });
+
+  it("ignores tags when none is asked for", async () => {
+    await save("refresh", 1);
+    await save("layout", 2);
+    expect((await latestSession(repo, { home: home.dir }))?.tag).toBe("layout");
+  });
+
+  it("returns null for a tag that was never used", async () => {
+    await save("refresh", 1);
+    expect(await latestSession(repo, { home: home.dir, tag: "nope" })).toBeNull();
+  });
+
+  it("does not match untagged sessions against a tag", async () => {
+    await save(undefined, 1);
+    expect(await latestSession(repo, { home: home.dir, tag: "refresh" })).toBeNull();
+  });
+
+  it("lists distinct tags, most recent first", async () => {
+    await save("refresh", 1);
+    await save("layout", 2);
+    await save("refresh", 3);
+    await save(undefined, 4);
+    expect(await listTags(repo, { home: home.dir })).toEqual(["refresh", "layout"]);
   });
 });
