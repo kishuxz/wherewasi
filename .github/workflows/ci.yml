@@ -38,10 +38,39 @@ jobs:
 
       # The published artifact is what users actually run, so exercise it —
       # a build that emits an unrunnable entrypoint passes every step above.
+      #
+      # Naming `node` supplies the interpreter and bypasses both the shebang
+      # and the executable bit, so these two lines pass on an artifact nobody
+      # can actually execute. That is exactly what happened: the build dropped
+      # the exec bit and this step stayed green. The next step is the one that
+      # catches it.
       - name: Smoke-test the built CLI
         run: |
           node dist/cli.js --version
           node dist/cli.js --help
+
+      # Run it the way a user does: no interpreter named, shebang and exec bit
+      # doing the work. `tsc` does not preserve mode, so without the postbuild
+      # chmod this fails with EACCES.
+      - name: Execute the entry point directly
+        run: |
+          test -x dist/cli.js || { echo "dist/cli.js is not executable — the build dropped the exec bit"; exit 1; }
+          ./dist/cli.js --version
+
+      # And through the bin shim, from a packed tarball installed into a
+      # separate project — the full path between `npm install` and a working
+      # command.
+      - name: Install the packed tarball and run the linked binary
+        run: |
+          set -e
+          TGZ="$PWD/$(npm pack --silent)"
+          TRIAL=$(mktemp -d)
+          cd "$TRIAL"
+          npm init -y >/dev/null 2>&1
+          npm install --silent "$TGZ"
+          test -x node_modules/wherewasi/dist/cli.js || { echo "packed entry point is not executable"; exit 1; }
+          ./node_modules/.bin/wherewasi --version
+          ./node_modules/.bin/wherewasi --help >/dev/null
 
       # We generate shell code for four shells, and unit tests can only assert
       # that strings contain substrings. The fish snippet shipped as a syntax
