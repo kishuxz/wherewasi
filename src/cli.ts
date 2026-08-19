@@ -254,7 +254,7 @@ async function cmdPause(
 
   if (hasKey && !opts.auto) {
     process.stderr.write(
-      paint(`  reconstructing context via ${selection.provider!.name}…\n`, "dim"),
+      paint(`  reconstructing context via ${selection.provider!.model}…\n`, "dim"),
     );
   }
 

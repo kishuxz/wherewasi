@@ -1,6 +1,7 @@
-import { AnthropicProvider } from "./anthropic.js";
+import { ANTHROPIC_DEFAULT_MODEL, AnthropicProvider } from "./anthropic.js";
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_MODEL,
   OpenAICompatibleProvider,
   isLocalEndpoint,
 } from "./openai-compatible.js";
@@ -41,6 +42,12 @@ function usesAnthropic(env: ProviderEnv): boolean {
 }
 
 /**
+ * The model is resolved to a real name here rather than left as "" for the
+ * provider constructor to rescue. The empty string never reached the wire —
+ * the constructor substituted a default — but it meant the choice was made two
+ * layers from where it was configured and was never reported, so two full
+ * evaluation runs completed against a model nobody had recorded.
+ *
  * One OpenAI-compatible path covers Groq, OpenAI, Together, OpenRouter,
  * DeepSeek and a local Ollama — they differ only by base URL and model id.
  * Anthropic is the one genuine exception, since its wire format differs.
@@ -57,7 +64,10 @@ export function selectProvider(env: ProviderEnv = process.env): Selection {
     return {
       provider: new AnthropicProvider({
         apiKey: key,
-        model: env["WHEREWASI_MODEL"] ?? env["ANTHROPIC_MODEL"] ?? "",
+        model:
+          env["WHEREWASI_MODEL"]?.trim() ||
+          env["ANTHROPIC_MODEL"]?.trim() ||
+          ANTHROPIC_DEFAULT_MODEL,
       }),
       reason: null,
     };
@@ -78,7 +88,7 @@ export function selectProvider(env: ProviderEnv = process.env): Selection {
   return {
     provider: new OpenAICompatibleProvider({
       apiKey: key ?? "",
-      model: env["WHEREWASI_MODEL"] ?? env["GROQ_MODEL"] ?? "",
+      model: env["WHEREWASI_MODEL"]?.trim() || env["GROQ_MODEL"]?.trim() || DEFAULT_MODEL,
       baseUrl,
     }),
     reason: null,
