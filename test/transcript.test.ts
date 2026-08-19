@@ -17,6 +17,7 @@ import { buildPrompt } from "../src/analyze.js";
 import type { CapturedState } from "../src/types.js";
 
 const REPO = "/Users/dev/projects/alpha";
+const syntheticGithubToken = ["ghp", "A".repeat(36)].join("_");
 
 /** One JSONL line, in the shape Claude Code actually writes. */
 function rec(o: Record<string, unknown>): string {
@@ -483,14 +484,14 @@ describe("transcript in the prompt", () => {
         {
           role: "user" as const,
           kind: "text" as const,
-          text: "it 401s, my key is sk-ant-api03-LEAKEDFROMCHAT0123 and GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          text: `it 401s, my key is sk-ant-api03-LEAKEDFROMCHAT0123 and GITHUB_TOKEN=${syntheticGithubToken}`,
           truncated: false,
         },
       ],
     };
     const prompt = buildPrompt(state, leaky);
     expect(prompt).not.toContain("sk-ant-api03-LEAKEDFROMCHAT0123");
-    expect(prompt).not.toContain("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(prompt).not.toContain(syntheticGithubToken);
     expect(prompt).toContain("[REDACTED]");
   });
 
