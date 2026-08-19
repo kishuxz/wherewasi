@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { analyze, buildPrompt, copiedFromPrompt, parseAnalysis } from "../src/analyze.js";
+import { formatResume } from "../src/format.js";
+import {
+  SYSTEM_PROMPT,
+  analyze,
+  buildPrompt,
+  copiedFromPrompt,
+  parseAnalysis,
+} from "../src/analyze.js";
 import type { CapturedState } from "../src/types.js";
 
 const state: CapturedState = {
@@ -138,5 +145,92 @@ describe("prompt-example contamination", () => {
         next_step: "Update guard to import evaluateRun.",
       }),
     ).toBe(false);
+  });
+});
+
+const sessionFixture = {
+  version: 1 as const,
+  savedAt: "2026-01-15T12:00:00.000Z",
+  repoPath: "/repo",
+  git: {
+    isRepo: true,
+    branch: "token-refresh",
+    diff: "+x",
+    stagedDiff: "",
+    log: "",
+    status: "",
+    diffTruncated: false,
+    stagedDiffTruncated: false,
+  },
+  recentFiles: [],
+  note: null,
+  input: null,
+  analysis: {
+    summary: "You were finishing a rename that broke the build.",
+    hypothesis: "A missed call site still imports the old name.",
+    ruled_out: [],
+    working_set: [] as string[],
+    next_step: "Update the missed import.",
+  },
+  analysisError: null,
+};
+
+describe("working_set ordering", () => {
+  // The order is produced by the model, so nothing here can prove it obeys —
+  // only the live runs can. What these pin are the two ways the ordering can
+  // be lost after the model gets it right: the rule being deleted from the
+  // prompt, and the renderer reordering what it was given.
+  it("instructs ordering by cause rather than by where the failure surfaced", () => {
+    expect(SYSTEM_PROMPT).toContain("ORDER BY CAUSE");
+    expect(SYSTEM_PROMPT).toMatch(/file holding the cause first/i);
+    expect(SYSTEM_PROMPT).toMatch(/failing test is evidence of a cause, not the cause/i);
+    // The superseded rule must not linger and contradict it.
+    expect(SYSTEM_PROMPT).not.toContain("Blockers first.");
+  });
+
+  it("renders the working set in the order given, without sorting it", () => {
+    const causeFirst = [
+      "src/core.ts — renamed evaluate to evaluateRun, which the other files still import",
+      "src/guard.ts — fails to compile because it imports the old name",
+      "src/guard.test.ts — the failing test that surfaced it",
+    ];
+    const out = formatResume(
+      {
+        ...sessionFixture,
+        analysis: { ...sessionFixture.analysis!, working_set: causeFirst },
+      },
+      { now: Date.parse("2026-01-15T14:00:00.000Z"), color: false },
+    );
+    const positions = causeFirst.map((e) => out.indexOf(e.split(" — ")[0]!));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    // Alphabetical would put guard.test.ts before guard.ts; causal does not.
+    expect(out.indexOf("src/guard.ts")).toBeLessThan(out.indexOf("src/guard.test.ts"));
+  });
+});
+
+describe("next_step direction", () => {
+  it("forbids steps that undo work already in flight", () => {
+    expect(SYSTEM_PROMPT).toMatch(/CONTINUE the work, not undo it/i);
+    expect(SYSTEM_PROMPT).toMatch(/reverses, re-adds, aliases or shims around/i);
+    expect(SYSTEM_PROMPT).toMatch(/fastest-to-green is not the goal/i);
+    // Stated generally. The prompt names renames elsewhere (summary, ruled_out)
+    // and that is fine; this rule specifically must not be about them, or it
+    // will not carry to migrations, deletions or API swaps.
+    const rule = SYSTEM_PROMPT.slice(
+      SYSTEM_PROMPT.indexOf("next_step —"),
+      SYSTEM_PROMPT.indexOf("Keep the summary on the PROBLEM"),
+    );
+    expect(rule).toMatch(/CONTINUE the work/);
+    expect(rule).not.toMatch(/\brenam/i);
+    expect(rule).not.toMatch(/\bimport\b/i);
+  });
+});
+
+describe("hypothesis targets the live thread", () => {
+  it("no longer bars the obstacle from the hypothesis", () => {
+    // This exact rule is what pushed the hypothesis onto the stale thread.
+    expect(SYSTEM_PROMPT).not.toContain("never in summary or hypothesis");
+    expect(SYSTEM_PROMPT).toMatch(/Address whichever is LIVE/i);
+    expect(SYSTEM_PROMPT).toMatch(/say both in one sentence/i);
   });
 });
