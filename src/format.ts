@@ -75,6 +75,14 @@ export function splitWorkingSetEntry(entry: string): { path: string; reason: str
   return { path: entry.replace(/^[`"']|[`"']$/g, "").trim(), reason: "" };
 }
 
+/**
+ * True when the analysis is missing because no credential was configured,
+ * rather than because the call was made and failed.
+ */
+export function needsKey(reason: string): boolean {
+  return /no api[_ ]?key|api[_ ]?key is not set|neither .+ nor .+ is set/i.test(reason);
+}
+
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim());
   return line ? line.trim() : "";
@@ -255,19 +263,30 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
 
   const reason = session.analysisError ?? "no analysis was recorded";
   out.push(paint(`  ⚠ Raw state only — ${reason}.`, "yellow"));
-  out.push(
-    paint(
-      "    With WHEREWASI_API_KEY set, this would instead be a three-sentence summary of",
-      "dim",
-    ),
-  );
-  out.push(
-    paint(
-      "    what you were doing, the hypothesis you were testing, what you'd already ruled",
-      "dim",
-    ),
-  );
-  out.push(paint("    out, why each file mattered, and your next step.", "dim"));
+
+  // Only offer the credential fix when the credential is what failed. Telling
+  // someone to set a variable they already set sends them to debug the wrong
+  // thing — observed with a valid key and a mistyped model name.
+  if (needsKey(reason)) {
+    out.push(
+      paint(
+        "    With WHEREWASI_API_KEY set, this would instead be a three-sentence summary of",
+        "dim",
+      ),
+    );
+    out.push(
+      paint(
+        "    what you were doing, the hypothesis you were testing, what you'd already ruled",
+        "dim",
+      ),
+    );
+    out.push(paint("    out, why each file mattered, and your next step.", "dim"));
+  } else {
+    out.push(
+      paint("    The endpoint was reached but did not return an analysis. The error", "dim"),
+    );
+    out.push(paint("    above is what it said; your captured state is intact either way.", "dim"));
+  }
   out.push("");
 
   return out;
@@ -280,9 +299,23 @@ function formatRawState(session: Session, paint: ReturnType<typeof makePaint>): 
  */
 export function provenanceLine(session: Session): string {
   const t = session.transcript;
-  if (!t) return "inferred from the diff";
-  const dropped = t.droppedTurns > 0 ? `, ${t.droppedTurns} older turn(s) not read` : "";
-  return `reconstructed from your Claude Code session — ${t.turns} turn(s)${dropped}`;
+  if (t) {
+    const dropped = t.droppedTurns > 0 ? `, ${t.droppedTurns} older turn(s) not read` : "";
+    return `reconstructed from your Claude Code session — ${t.turns} turn(s)${dropped}`;
+  }
+
+  // Name what was actually there. Claiming a diff on a clean tree is worse
+  // than saying nothing, because the whole point of the line is to tell the
+  // reader how much the reconstruction had to work with.
+  const g = session.git;
+  const sources: string[] = [];
+  if (g.diff.trim() || g.stagedDiff.trim()) sources.push("the diff");
+  if (session.input?.trim()) sources.push("the output you piped in");
+  if (!sources.length && g.status.trim()) sources.push("the working tree");
+  if (!sources.length && session.recentFiles.length) sources.push("the files you had open");
+
+  if (!sources.length) return "inferred from almost nothing — no diff, no piped output";
+  return `inferred from ${sources.join(" and ")}`;
 }
 
 /**

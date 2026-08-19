@@ -3,6 +3,7 @@ import {
   formatList,
   formatResume,
   keylessGuidance,
+  needsKey,
   provenanceLine,
   relativeTime,
   splitWorkingSetEntry,
@@ -233,9 +234,17 @@ describe("describeWindow", () => {
   });
 
   it("points at the current key variable, not the legacy one", () => {
-    const out = formatResume(raw, opts);
-    expect(out).toContain("WHEREWASI_API_KEY");
-    expect(out).not.toContain("ANTHROPIC_API_KEY");
+    const out = formatResume(
+      { ...raw, analysisError: "no API key set (WHEREWASI_API_KEY, or GROQ_API_KEY)" },
+      opts,
+    );
+    expect(out).toContain("With WHEREWASI_API_KEY set");
+  });
+
+  it("does not offer a key when the reason for having none is unknown", () => {
+    // analysisError null means nobody recorded why; guessing "missing key" is
+    // how a valid key plus a bad model name sent someone to the wrong place.
+    expect(formatResume(raw, opts)).not.toContain("With WHEREWASI_API_KEY set");
   });
 });
 
@@ -357,8 +366,9 @@ describe("provenance", () => {
     );
   });
 
-  it("says when it was only the diff", () => {
-    expect(provenanceLine(base)).toBe("inferred from the diff");
+  it("says when there was no session to read", () => {
+    // base carries a diff and piped output, so both are named.
+    expect(provenanceLine(base)).toBe("inferred from the diff and the output you piped in");
     expect(formatResume(base, opts)).toContain("inferred from the diff");
   });
 
@@ -373,5 +383,80 @@ describe("provenance", () => {
   it("stays quiet on raw-state sessions, which have no analysis to qualify", () => {
     const raw = { ...withSession, analysis: null };
     expect(formatResume(raw, opts)).not.toContain("reconstructed from");
+  });
+});
+
+describe("provenance names what was actually read", () => {
+  const bare = (over: Partial<Session["git"]> = {}, rest: Partial<Session> = {}): Session => ({
+    ...base,
+    git: { ...base.git, diff: "", stagedDiff: "", status: "", ...over },
+    input: null,
+    recentFiles: [],
+    ...rest,
+  });
+
+  it("does not claim a diff when there is none", () => {
+    // The whole point of the line is to say how much it had to work with.
+    const clean = bare({ status: " M src/a.ts" });
+    expect(provenanceLine(clean)).not.toContain("the diff");
+    expect(provenanceLine(clean)).toBe("inferred from the working tree");
+  });
+
+  it("names the diff when there is one", () => {
+    expect(provenanceLine(bare({ diff: "+const a = 1;" }))).toBe("inferred from the diff");
+    expect(provenanceLine(bare({ stagedDiff: "+const a = 1;" }))).toBe("inferred from the diff");
+  });
+
+  it("names piped output, and both together", () => {
+    expect(provenanceLine(bare({}, { input: "FAIL src/a.test.ts" }))).toBe(
+      "inferred from the output you piped in",
+    );
+    expect(provenanceLine(bare({ diff: "+x" }, { input: "FAIL" }))).toBe(
+      "inferred from the diff and the output you piped in",
+    );
+  });
+
+  it("falls back to the files that were open", () => {
+    const only = bare({}, { recentFiles: [{ path: "src/a.ts", mtime: base.savedAt }] });
+    expect(provenanceLine(only)).toBe("inferred from the files you had open");
+  });
+
+  it("admits when there was almost nothing", () => {
+    expect(provenanceLine(bare())).toContain("almost nothing");
+  });
+});
+
+describe("the failure message reflects the actual failure", () => {
+  const failed = (reason: string): Session => ({ ...base, analysis: null, analysisError: reason });
+
+  it("offers the key only when the key was the problem", () => {
+    expect(
+      needsKey("no API key set (WHEREWASI_API_KEY, or GROQ_API_KEY for the default endpoint)"),
+    ).toBe(true);
+    expect(
+      needsKey("Anthropic selected but neither WHEREWASI_API_KEY nor ANTHROPIC_API_KEY is set"),
+    ).toBe(true);
+  });
+
+  it("does not blame the key for an unrelated failure", () => {
+    for (const reason of [
+      "404 model `openai/gpt-oss-120x` does not exist or you do not have access to it",
+      "rate limit reached — state saved without analysis; try again in a minute",
+      "openai/gpt-oss-120b returned an unusable analysis — next_step was empty",
+    ]) {
+      expect(needsKey(reason)).toBe(false);
+    }
+  });
+
+  it("prints the error without telling the user to set a key they already set", () => {
+    const out = formatResume(failed("404 model `openai/gpt-oss-120x` does not exist"), opts);
+    expect(out).toContain("does not exist");
+    expect(out).not.toContain("With WHEREWASI_API_KEY set");
+    expect(out).toContain("The endpoint was reached");
+  });
+
+  it("still offers the key when the key really is missing", () => {
+    const out = formatResume(failed("no API key set (WHEREWASI_API_KEY, or GROQ_API_KEY)"), opts);
+    expect(out).toContain("With WHEREWASI_API_KEY set");
   });
 });
