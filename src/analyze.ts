@@ -24,6 +24,7 @@ Examples below use an unrelated imaginary project (a PDF exporter) to show FORM 
 summary — max 3 sentences, second person, begins "You were". First sentence names the PROBLEM. Do not list what changed; no refactors, renames or filenames in it. Bad: "You were renaming renderPage to renderSheet across the exporter." Good: "You were chasing why long documents lose their last page on export."
 
 hypothesis — second person, the specific falsifiable belief being tested, stating the suspected mechanism. Bad: "You were improving pagination handling." Good: "You suspected the page counter is computed before the final flush, so the last buffer is never counted." Do not restate edits.
+  Two things are usually true at once: the GOAL they were pursuing and the OBSTACLE now in front of it, often different threads. Address whichever is LIVE — what must be resolved before anything else can move. If the obstacle is not part of the goal, say both in one sentence rather than silently choosing one: the live obstacle, then the goal it interrupted.
 
 ruled_out — candidate CAUSES of the problem that were tried and dismissed. Highest-risk field: a wrong entry makes them skip a live suspect. Every entry needs evidence of an abandoned attempt — code deleted, an approach reverted, a commented-out block, a removed debug line, or the note saying something failed.
   These are NOT eliminations, however reasonable they sound:
@@ -36,11 +37,13 @@ ruled_out — candidate CAUSES of the problem that were tried and dismissed. Hig
 working_set — exactly two kinds of file:
   1. Files that matter to the hypothesis. Say why they matter to the investigation, not what changed in them.
   2. BLOCKERS — anything the evidence shows is stopping the next step: a file that fails to compile, the source of a failing test, an export something still imports under its old name. Include these even if unrelated to the hypothesis and even if never edited; a file that fails to build is load-bearing regardless. If the captured output contains an error, the file it names is a blocker. Name the blocker in the clause, not just the file.
-  Each entry exactly \`path — clause\`. The path must be one literal file copied from the evidence — for a blocker, the exact path the error or stack trace names. Never a glob, a wildcard, a directory, or a pattern containing * or **. Blockers first.
+  Each entry exactly \`path — clause\`. The path must be one literal file copied from the evidence — for a blocker, the exact path the error or stack trace names. Never a glob, a wildcard, a directory, or a pattern containing * or **.
+  ORDER BY CAUSE, not by where the failure surfaced: the file holding the cause first, then every file broken by it, then context. Files that are merely relevant — not causing the failure and not broken by it — come LAST, below the ones that are. A stack trace reports the symptom outermost — do not mirror it. A failing test is evidence of a cause, not the cause; the file it accuses outranks the test.
 
 next_step — one concrete instruction, executable without further decisions. If a blocker exists, clearing it IS the next step; never tell them to run something that cannot currently run.
+  It must CONTINUE the work, not undo it. The diff and recent commits show a direction of travel; a step that reverses, re-adds, aliases or shims around something the developer deliberately changed is WRONG even when it turns the build green. Fastest-to-green is not the goal. Where a change is partly applied, finish applying it: bring the remaining callers up to the new state, never the new state back to the old. Do not offer the undo as an alternative either — no "or add an alias", no parenthetical fallback. One direction only.
 
-Blockers appear in working_set and next_step ONLY — never in summary or hypothesis, which describe the problem, not the obstacle. A broken build is not what they were thinking about.
+Keep the summary on the PROBLEM rather than the obstacle — a broken build is not what they set out to do. The hypothesis is not bound by that: when the obstacle is what is live, the hypothesis is where it belongs.
 
 Prefer honest uncertainty to invention. If the evidence does not reveal the goal, say so in the summary rather than inventing one.
 
