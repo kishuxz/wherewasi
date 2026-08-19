@@ -10,6 +10,10 @@ Returning to a task after an interruption costs about 23 minutes for knowledge w
 npx wherewasi pause "auth token refresh still failing"
 ```
 
+One run: a dirty tree mid-task, a failing test suite piped into `pause`, then `resume` reconstructing the goal, the blocker, and what to do next.
+
+[![Watch the demo](https://asciinema.org/a/FRXfOTGxObnbb2G0.svg)](https://asciinema.org/a/FRXfOTGxObnbb2G0)
+
 ---
 
 ## What it actually looks like
