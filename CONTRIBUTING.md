@@ -99,6 +99,8 @@ eval/run.sh          # writes raw session JSON to eval/out/, then prints the pai
 
 It builds the scenario — a half-finished `evaluate` → `evaluateRun` rename with `guard` missed, a debug print, a stub that only bumps a timestamp, and a failing suite — and runs each of four variants **twice against identical repo state**: once with a Claude Code session available, once with `--no-session`. The only difference within a pair is the transcript.
 
+The harness creates synthetic repositories under isolated homes and explicitly seeds hosted approval for each fixture before its headless `pause`. Running the harness is the choice to send those synthetic prompts to the configured endpoint. Ordinary noninteractive pauses still require prior interactive review and approval.
+
 Judged on five criteria: does `summary` name the problem rather than restate the diff, is `hypothesis` specific and falsifiable, is `ruled_out` backed by evidence of an abandoned attempt, does `working_set` give a reason per file, is a blocker named where one exists.
 
 `eval/score.py` prints the pairs side by side but deliberately does **not** score them — four of the five criteria are judgements, and a script that scored them would be measuring keyword matching. It checks only the one mechanical signal: the synthesised session contains two abandoned attempts (a DNS/sink-URL check, and an HTTP timeout that was tried and reverted) that appear **nowhere in the diff**, so only a run that read the session can cite them in `ruled_out`.
@@ -123,4 +125,4 @@ The [bug form](https://github.com/kishuxz/wherewasi/issues/new?template=bug_repo
 
 ## Scope
 
-The commands are `pause`, `resume`, `list` and `status`, plus the opt-in `install-hook` and `shell-init`. No daemon, no editor plugin, no web UI, no team features, no config file. A PR adding one of those will be declined regardless of quality — please open an issue first if you think a case is genuinely different.
+The CLI includes `pause`, `resume`, `handoff`, `switch`, `list`, `status`, and `privacy`. Optional integrations are `install-hook`, `shell-init`, and a local stdio MCP server for coding agents. Checkpoints and hosted approvals stay on the user's machine. MCP runs only while an agent host is connected. There is no web UI, account, telemetry, or team sync; propose changes to that scope in an issue first.

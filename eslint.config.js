@@ -26,7 +26,7 @@ export default tseslint.config(
   {
     // Build scripts run under node directly and are never bundled, so they use
     // node globals and are allowed to talk to the operator.
-    files: ["scripts/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "eval/**/*.mjs"],
     languageOptions: {
       globals: { console: "readonly", process: "readonly", URL: "readonly" },
     },
