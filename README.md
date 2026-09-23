@@ -253,6 +253,16 @@ wherewasi pause --tag token-refresh --actor codex "fixed the stale import; next 
 
 The checkpoint is task state, not an agent transcript. The receiving agent should verify it against the current tree and update the same tag before handing work back. No agent integration is installed automatically; both agents can invoke the CLI explicitly.
 
+### `wherewasi switch <branch> [note] [--tag <task>] [--create]`
+
+Saves the task **before** running `git switch`, so the checkpoint describes the branch you are leaving. For example:
+
+```sh
+wherewasi switch feature-b --tag auth "checking token expiry on feature-a"
+```
+
+This waits for `pause` to finish before switching. A failed model request still saves raw state; if saving the checkpoint itself fails, the switch does not run. `--create` passes `--create` to Git. Ordinary `git switch` and `git checkout` cannot trigger this before-switch capture.
+
 ### Several investigations at once
 
 Parallel agents and worktrees mean one repo often has more than one thing in flight. Tag a pause and ask for it back by name:
@@ -319,7 +329,7 @@ Recent pauses for this repo: when, branch, first line of the summary. Automatic 
 The obvious flaw in a tool you have to run _before_ an interruption is that you do not see the interruption coming. Two opt-in integrations remove the dependency. Neither is on unless you turn it on.
 
 ```sh
-wherewasi install-hook                  # capture on branch switch
+wherewasi install-hook                  # capture after branch switch
 eval "$(wherewasi shell-init zsh)"      # capture when the shell exits
 ```
 
@@ -329,7 +339,7 @@ eval "$(wherewasi shell-init zsh)"      # capture when the shell exits
 wherewasi shell-init fish | source
 ```
 
-`install-hook` writes a git `post-checkout` hook into the current repo. `shell-init` prints a snippet for your `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` — it writes nothing itself. Both print exactly what they will do first, and both come back out:
+`install-hook` writes a git `post-checkout` hook in Git's effective hooks directory, including a repo-local `core.hooksPath`. It refuses a shared hooks directory outside the repo to avoid changing other repositories. `shell-init` prints a snippet for your `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` — it writes nothing itself. Both print exactly what they will do first, and both come back out:
 
 ```sh
 wherewasi install-hook --dry-run        # print the hook, write nothing
@@ -345,7 +355,7 @@ wherewasi shell-init zsh --uninstall    # print the line to delete
 
 **It will not spam.** Automatic captures for a repo are debounced to one per two minutes, so closing four terminals or switching branches three times in a row costs one capture, not four. Deliberate `wherewasi pause` is never debounced.
 
-Two honest limits. `post-checkout` runs _after_ the switch, so the branch recorded is the one you landed on, not the one you left. And a capture triggered by shell exit has no note and nothing piped in, so it is working from the diff alone — which is the weakest evidence this tool takes. Automatic capture is a safety net for the times you forget; a deliberate `pause` with a note is still worth much more.
+Two honest limits. `post-checkout` runs _after_ the switch, so it records the branch you landed on; use `wherewasi switch` to checkpoint the task you are leaving. A capture triggered by shell exit has no note and nothing piped in, so it is working from the diff alone — the weakest evidence this tool takes. Automatic capture is a safety net for the times you forget; a deliberate `pause` with a note is still worth much more.
 
 ---
 
@@ -463,7 +473,7 @@ One JSON file per pause, holding the raw captured state plus the analysis. Repos
 
 No daemon. No background process. No editor plugin. No web UI. No team features. No config file. No settings.
 
-The CLI focuses on `pause`, `resume`, `handoff`, `list`, and `status`.
+The CLI focuses on `pause`, `resume`, `handoff`, `switch`, `list`, and `status`.
 
 ---
 

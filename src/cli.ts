@@ -6,7 +6,14 @@ import { homedir } from "node:os";
 import { fstatSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { captureState, findGitDir, findRepoRoot, parseSince } from "./capture.js";
+import {
+  captureState,
+  findGitCommonDir,
+  findGitDir,
+  findHooksDir,
+  findRepoRoot,
+  parseSince,
+} from "./capture.js";
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
@@ -500,13 +507,30 @@ function nodePath(): string {
 
 async function cmdInstallHook(opts: { uninstall?: boolean; dryRun?: boolean }): Promise<void> {
   const paint = makePaint();
-  const gitDir = await findGitDir(process.cwd());
-  if (!gitDir) fail("not a git repository — nothing to install a hook into");
+  const [gitDir, gitCommonDir, hooksDir, repoRoot] = await Promise.all([
+    findGitDir(process.cwd()),
+    findGitCommonDir(process.cwd()),
+    findHooksDir(process.cwd()),
+    findRepoRoot(process.cwd()),
+  ]);
+  if (!gitDir || !repoRoot) fail("not a git repository — nothing to install a hook into");
+  if (!hooksDir) fail("Git hooks are disabled or their directory cannot be resolved");
+  const inside = (parent: string) => {
+    const rel = path.relative(parent, hooksDir);
+    return (
+      rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel))
+    );
+  };
+  if (!inside(repoRoot) && !inside(gitDir) && !(gitCommonDir && inside(gitCommonDir))) {
+    fail(
+      `the configured hooks directory is outside this repository (${hooksDir}); installing there could affect other repositories`,
+    );
+  }
 
-  const file = hookPath(gitDir);
+  const file = hookPath(gitDir, hooksDir);
 
   if (opts.uninstall) {
-    const result = await uninstallHook(gitDir);
+    const result = await uninstallHook(gitDir, hooksDir);
     if (!result.ok) {
       fail(
         `${file} was not written by wherewasi — refusing to remove it.\n` +
@@ -536,7 +560,7 @@ async function cmdInstallHook(opts: { uninstall?: boolean; dryRun?: boolean }): 
     return;
   }
 
-  const result = await installHook(gitDir, nodePath(), cliPath());
+  const result = await installHook(gitDir, nodePath(), cliPath(), hooksDir);
   if (!result.ok) {
     fail(
       `${file} already exists and was not written by wherewasi.\n` +
@@ -547,8 +571,26 @@ async function cmdInstallHook(opts: { uninstall?: boolean; dryRun?: boolean }): 
 
   process.stdout.write(
     `  ${paint("✓", "green")} ${result.action === "updated" ? "Updated" : "Installed"} ${result.file}\n` +
-      `    Captures on branch switch. Remove with ${paint("wherewasi install-hook --uninstall", "cyan")}.\n\n`,
+      `    Captures after a branch switch. Remove with ${paint("wherewasi install-hook --uninstall", "cyan")}.\n\n`,
   );
+}
+
+async function cmdSwitch(
+  branch: string,
+  note: string | undefined,
+  opts: { create?: boolean; tag?: string },
+): Promise<void> {
+  if (!(await findRepoRoot(process.cwd()))) fail("not a git repository — cannot switch branches");
+  if (branch.startsWith("-") && branch !== "-")
+    fail("branch names beginning with '-' are not supported");
+  await cmdPause(note, { ...(opts.tag ? { tag: opts.tag } : {}), actor: "human" });
+  const args = ["switch", ...(opts.create ? ["--create"] : []), branch];
+  const code = await new Promise<number>((resolve, reject) => {
+    const child = spawn("git", args, { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (exitCode) => resolve(exitCode ?? 1));
+  });
+  if (code !== 0) process.exitCode = code;
 }
 
 function cmdShellInit(shellArg: string | undefined, opts: { uninstall?: boolean }): void {
@@ -659,6 +701,19 @@ program
   .action(async (opts: { uninstall?: boolean; dryRun?: boolean }) => {
     await cmdInstallHook(opts);
   });
+
+program
+  .command("switch")
+  .argument("<branch>", "branch to switch to")
+  .argument("[note]", "what you were doing before switching")
+  .option("--create", "create the branch before switching")
+  .option("--tag <name>", "task name for the checkpoint")
+  .description("save the departing task, then run git switch")
+  .action(
+    async (branch: string, note: string | undefined, opts: { create?: boolean; tag?: string }) => {
+      await cmdSwitch(branch, note, opts);
+    },
+  );
 
 program
   .command("shell-init")

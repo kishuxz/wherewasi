@@ -174,8 +174,8 @@ export function detectShell(env: Record<string, string | undefined>): Shell | nu
   return SHELLS.find((s) => name === s || name.endsWith(`-${s}`)) ?? null;
 }
 
-export function hookPath(gitDir: string): string {
-  return path.join(gitDir, "hooks", "post-checkout");
+export function hookPath(gitDir: string, hooksDir = path.join(gitDir, "hooks")): string {
+  return path.join(hooksDir, "post-checkout");
 }
 
 export type InstallOutcome =
@@ -191,8 +191,9 @@ export async function installHook(
   gitDir: string,
   nodePath: string,
   cliPath: string,
+  hooksDir?: string,
 ): Promise<InstallOutcome> {
-  const file = hookPath(gitDir);
+  const file = hookPath(gitDir, hooksDir);
   const existing = await readIfPresent(file);
 
   if (existing !== null && !existing.includes(MARKER)) {
@@ -210,8 +211,8 @@ export type UninstallOutcome =
   | { ok: true; action: "absent"; file: string }
   | { ok: false; reason: "foreign-hook"; file: string };
 
-export async function uninstallHook(gitDir: string): Promise<UninstallOutcome> {
-  const file = hookPath(gitDir);
+export async function uninstallHook(gitDir: string, hooksDir?: string): Promise<UninstallOutcome> {
+  const file = hookPath(gitDir, hooksDir);
   const existing = await readIfPresent(file);
 
   if (existing === null) return { ok: true, action: "absent", file };

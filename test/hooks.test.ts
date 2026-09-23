@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { findGitDir, findHooksDir } from "../src/capture.js";
+import { FixtureRepo } from "./helpers/fixture-repo.js";
 import {
   MARKER,
   SHELLS,
@@ -20,6 +24,7 @@ import {
 
 const NODE = "/usr/local/bin/node";
 const CLI = "/usr/local/lib/node_modules/wherewasi/dist/cli.js";
+const execFileAsync = promisify(execFile);
 
 describe("launchLine", () => {
   it("detaches so the triggering command is never blocked", () => {
@@ -238,5 +243,34 @@ describe("install and uninstall", () => {
   it("creates the hooks directory when it does not exist", async () => {
     await rm(path.join(gitDir, "hooks"), { recursive: true, force: true });
     expect(await installHook(gitDir, NODE, CLI)).toMatchObject({ ok: true });
+  });
+});
+
+describe("configured Git hooks path", () => {
+  it("installs where Git actually runs hooks and fires on a real switch", async () => {
+    const repo = await FixtureRepo.create("wherewasi-custom-hooks-");
+    try {
+      await repo.write("base.txt", "base\n");
+      await repo.commit("base");
+      await repo.git("config", "core.hooksPath", ".custom-hooks");
+      const gitDir = await findGitDir(repo.dir);
+      const hooksDir = await findHooksDir(repo.dir);
+      expect(hooksDir).toBe(path.join(repo.dir, ".custom-hooks"));
+      const marker = path.join(repo.dir, "hook-fired.txt");
+      const fakeCli = await repo.write(
+        "fake-cli.cjs",
+        "require('node:fs').writeFileSync(process.env.WWI_MARKER, process.argv.slice(2).join(' '));\n",
+      );
+      expect((await installHook(gitDir!, process.execPath, fakeCli, hooksDir!)).ok).toBe(true);
+      await repo.git("branch", "feature");
+      await execFileAsync("git", ["switch", "feature"], {
+        cwd: repo.dir,
+        env: { ...process.env, WHEREWASI_DEBUG: "1", WWI_MARKER: marker },
+      });
+      expect(await readFile(marker, "utf8")).toBe("pause --auto");
+      expect((await uninstallHook(gitDir!, hooksDir!)).ok).toBe(true);
+    } finally {
+      await repo.cleanup();
+    }
   });
 });

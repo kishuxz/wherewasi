@@ -70,10 +70,25 @@ export async function findGitDir(cwd: string): Promise<string | null> {
   return dir ? path.resolve(dir) : null;
 }
 
+/** Resolve Git's effective hooks directory for a non-bare working tree. */
+export async function findHooksDir(cwd: string): Promise<string | null> {
+  const [root, gitDir] = await Promise.all([findRepoRoot(cwd), findGitDir(cwd)]);
+  if (!root || !gitDir) return null;
+  const configured = await git(["config", "--path", "--get", "core.hooksPath"], cwd);
+  if (!configured) return path.join(gitDir, "hooks");
+  if (configured === "/dev/null") return null;
+  return path.resolve(root, configured);
+}
+
 /** Linked worktrees share this directory even though their working paths differ. */
-export async function findRepoId(cwd: string): Promise<string | null> {
+export async function findGitCommonDir(cwd: string): Promise<string | null> {
   const common = await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
-  return common ? createHash("sha256").update(path.resolve(cwd, common)).digest("hex") : null;
+  return common ? path.resolve(cwd, common) : null;
+}
+
+export async function findRepoId(cwd: string): Promise<string | null> {
+  const common = await findGitCommonDir(cwd);
+  return common ? createHash("sha256").update(common).digest("hex") : null;
 }
 
 export async function captureGit(root: string): Promise<GitState> {
