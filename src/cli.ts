@@ -694,6 +694,15 @@ program
   });
 
 program
+  .command("mcp")
+  .option("--repo <path>", "default repository for local MCP handoff tools")
+  .description("serve local read-only task handoffs over MCP stdio")
+  .action(async (opts: { repo?: string }) => {
+    const { runMcp } = await import("./mcp.js");
+    await runMcp(opts.repo ?? process.cwd());
+  });
+
+program
   .command("install-hook")
   .option("--uninstall", "remove the hook")
   .option("--dry-run", "print the hook without writing it")
