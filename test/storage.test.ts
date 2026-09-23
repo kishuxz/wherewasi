@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   fileNameFor,
@@ -88,6 +88,35 @@ describe("storage layer", () => {
     expect(loaded?.version).toBe(1);
     expect(loaded?.savedAt).toBe("2026-01-15T12:00:00.000Z");
     expect(loaded?.analysis?.summary).toBe(analysis.summary);
+  });
+
+  it("never overwrites two captures made in the same millisecond", async () => {
+    const now = new Date("2026-01-15T12:00:00.000Z");
+    const first = await saveSession(
+      state(repoA, { note: "first" }),
+      { analysis, analysisError: null },
+      { home: home.dir, now },
+    );
+    const second = await saveSession(
+      state(repoA, { note: "second" }),
+      { analysis, analysisError: null },
+      { home: home.dir, now },
+    );
+    expect(first.file).not.toBe(second.file);
+    expect((await listSessions(repoA, { home: home.dir })).map((s) => s.note).sort()).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("stores captured code in owner-only files and directories", async () => {
+    const { file } = await saveSession(
+      state(repoA),
+      { analysis, analysisError: null },
+      { home: home.dir },
+    );
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(path.dirname(file))).mode & 0o777).toBe(0o700);
   });
 
   it("stores keyless pauses with the reason recorded", async () => {

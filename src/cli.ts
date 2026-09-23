@@ -30,6 +30,7 @@ import {
   splitWorkingSetEntry,
 } from "./format.js";
 import { formatStatus, toRow } from "./status.js";
+import { formatHandoff, loadHandoff } from "./handoff.js";
 import {
   DEBUG_ENV,
   SHELLS,
@@ -163,7 +164,16 @@ async function noticeOnce(home: string): Promise<boolean> {
 
 async function cmdPause(
   note: string | undefined,
-  opts: { since?: string; auto?: boolean; tag?: string; session?: boolean; thinking?: boolean },
+  opts: {
+    since?: string;
+    auto?: boolean;
+    tag?: string;
+    session?: boolean;
+    thinking?: boolean;
+    withSession?: boolean;
+    withThinking?: boolean;
+    actor?: string;
+  },
 ): Promise<void> {
   const paint = makePaint();
   const started = Date.now();
@@ -180,6 +190,10 @@ async function cmdPause(
   const repoPath = await resolveRepoPath();
   const tag = opts.tag?.trim() || undefined;
   if (opts.tag !== undefined && !tag) fail("--tag needs a name");
+  const actor = opts.actor?.trim();
+  if (actor && !["human", "claude-code", "codex"].includes(actor)) {
+    fail("--actor must be human, claude-code, or codex");
+  }
 
   let since: Date | null = null;
   let sinceSource: "last-pause" | "explicit" | undefined;
@@ -234,16 +248,33 @@ async function cmdPause(
     input: state.input ? redact(state.input) : null,
   };
 
-  // Opt-out is checked before anything is read, not after.
-  const sessionsAllowed = opts.session !== false && !process.env["WHEREWASI_NO_SESSION"];
+  // Conversation access is opt-in and checked before anything is read.
+  const sessionsAllowed =
+    actor !== "codex" &&
+    (opts.withSession === true ||
+      opts.withThinking === true ||
+      process.env["WHEREWASI_WITH_SESSION"] === "1") &&
+    opts.session !== false &&
+    !process.env["WHEREWASI_NO_SESSION"];
   // Separate switch: reasoning can be declined without giving up the session.
-  const thinkingAllowed = opts.thinking !== false && !process.env["WHEREWASI_NO_THINKING"];
+  const thinkingAllowed =
+    (opts.withThinking === true || process.env["WHEREWASI_WITH_THINKING"] === "1") &&
+    opts.thinking !== false &&
+    !process.env["WHEREWASI_NO_THINKING"];
   const transcript = sessionsAllowed
     ? await findTranscript(repoPath, { thinking: thinkingAllowed })
     : null;
   const stateWithSession = transcript
     ? { ...stored, transcript: toRef(transcript) }
     : { ...stored };
+
+  if (transcript && !opts.auto && (await noticeOnce(homedir()))) {
+    say(
+      `\n  ${paint("Note:", "bold")} ${paint("wherewasi is reading this repo's Claude Code session.", "yellow")}\n` +
+        `  ${paint("Its selected turns may be sent to your configured model endpoint.", "yellow")}\n` +
+        `  ${paint(thinkingAllowed ? "Assistant reasoning is included because you enabled it." : "Assistant reasoning is excluded by default.", "yellow")}\n\n`,
+    );
+  }
 
   const selection = selectProvider(process.env);
   const hasKey = selection.provider !== null;
@@ -267,19 +298,8 @@ async function cmdPause(
     analysisError: error,
     trigger: opts.auto ? "auto" : "manual",
     ...(tag ? { tag } : {}),
+    ...(actor ? { actor: actor as Session["actor"] } : {}),
   });
-
-  if (transcript && !opts.auto) {
-    if (await noticeOnce(homedir())) {
-      say(
-        `\n  ${paint("Note:", "bold")} ${paint("wherewasi read the last few turns of your Claude Code session for", "yellow")}\n` +
-          `  ${paint("this repo, to work from what you said rather than only from the diff.", "yellow")}\n` +
-          `  ${paint("That includes the assistant's reasoning. Leave that out with --no-thinking,", "yellow")}\n` +
-          `  ${paint("or turn the whole thing off with --no-session (WHEREWASI_NO_SESSION=1 to persist).", "yellow")}\n` +
-          `  ${paint("Point WHEREWASI_BASE_URL at a local model and it never leaves this machine.", "yellow")}\n`,
-      );
-    }
-  }
 
   const totalMs = Date.now() - started;
   if (opts.auto) {
@@ -587,8 +607,11 @@ program
     "scan files modified since 30m / 2h / 1d / an ISO timestamp (default: your last pause)",
   )
   .option("--tag <name>", "label this pause, to resume it by name later")
+  .option("--actor <name>", "who saved the checkpoint: human, claude-code, or codex")
   .option("--no-session", "do not read a Claude Code session for this repo")
-  .option("--no-thinking", "read the session but leave out the assistant's reasoning")
+  .option("--with-session", "include recent Claude Code turns for this repo")
+  .option("--with-thinking", "also include assistant reasoning (implies --with-session)")
+  .option("--no-thinking", "exclude assistant reasoning even if enabled in the environment")
   .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
   .action(
@@ -600,11 +623,33 @@ program
         tag?: string;
         session?: boolean;
         thinking?: boolean;
+        withSession?: boolean;
+        withThinking?: boolean;
+        actor?: string;
       },
     ) => {
       await cmdPause(note, opts);
     },
   );
+
+program
+  .command("handoff")
+  .argument("[tag]", "task tag to continue across agents and linked worktrees")
+  .option("--json", "emit a versioned JSON handoff for tools")
+  .description("read the latest task checkpoint for a human or coding agent")
+  .action(async (tag: string | undefined, opts: { json?: boolean }) => {
+    const handoff = await loadHandoff(process.cwd(), tag);
+    if (!handoff) {
+      fail(
+        tag
+          ? `no checkpoint tagged "${tag}" for this repository`
+          : "no checkpoint for this repository",
+      );
+    }
+    process.stdout.write(
+      opts.json ? `${JSON.stringify(handoff, null, 2)}\n` : formatHandoff(handoff),
+    );
+  });
 
 program
   .command("install-hook")

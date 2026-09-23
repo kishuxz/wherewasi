@@ -6,7 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `handoff [tag] [--json]` exports a versioned task checkpoint for humans and coding agents. Tagged checkpoints can be read from linked worktrees, with Git revision and tracked-change verification.
+- `pause --actor human|claude-code|codex` records who explicitly saved a checkpoint.
+
+### Changed
+
+- Claude Code conversation access now requires `--with-session` or `WHEREWASI_WITH_SESSION=1`. Assistant reasoning requires the separate `--with-thinking` choice. The first-use notice appears before analysis.
+- Session files are published atomically with private permissions. Captures in the same millisecond no longer overwrite each other.
 
 ## [0.1.0] - 2026-08-17
 

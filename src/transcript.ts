@@ -112,8 +112,8 @@ function entriesOf(role: "user" | "assistant", content: unknown): TranscriptTurn
  *
  * Excluded on purpose: `tool_use` and `tool_result`, which are 66% of a
  * transcript by volume and are the same file contents and command output the
- * diff already carries; and `thinking`, which is the most sensitive material
- * in the file while user and assistant text already state intent directly.
+ * diff already carries. Reasoning is parsed separately so the caller can
+ * exclude it by default.
  */
 export function parseTranscript(
   raw: string,

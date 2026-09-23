@@ -1,10 +1,9 @@
 # wherewasi
 
 [![CI](https://github.com/kishuxz/wherewasi/actions/workflows/ci.yml/badge.svg)](https://github.com/kishuxz/wherewasi/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/wherewasi)](https://www.npmjs.com/package/wherewasi)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/kishuxz/wherewasi/blob/main/LICENSE)
 
-Returning to a task after an interruption costs about 23 minutes for knowledge workers, and more for developers, because what you lose isn't your place in a file — it's a mental model of the code, the data flow, and the hypothesis you were testing. Every other tool saves your files and your tabs; none of them save _why_ those files were open or what you'd already ruled out. `wherewasi` captures that reasoning state before you walk away and hands it back when you return.
+Returning to a task after an interruption means rebuilding the mental model behind the files: the goal, the suspected cause, what failed, and what to try next. `wherewasi` saves a checkpoint of that state before you walk away and hands it back when you return or switch coding agents.
 
 ```sh
 npx wherewasi pause "auth token refresh still failing"
@@ -18,7 +17,7 @@ One run: a dirty tree mid-task, a failing test suite piped into `pause`, then `r
 
 ## What it actually looks like
 
-Real output, verbatim, from a half-finished symbol rename across a TypeScript monorepo — three packages migrated, a fourth missed, a debug print left mid-investigation, and a broken build:
+Illustrative output adapted from a half-finished symbol rename across a TypeScript monorepo — three packages migrated, a fourth missed, a debug print left mid-investigation, and a broken build:
 
 ```console
 $ pnpm test 2>&1 | wherewasi pause "auth token refresh still failing"
@@ -48,9 +47,7 @@ $ wherewasi resume
     packages/collector/src/index.ts — contains the token-age check, refreshSinkToken stub, and debug logging you added to investigate the refresh failure
 
   Next step
-    Add an export alias in packages/core/src/index.ts (e.g., `export const
-    evaluate = evaluateRun;`) or update guard imports to use evaluateRun so
-    the guard package can build again
+    Update the remaining guard import to use evaluateRun, then rerun the build
 
   Your note
     auth token refresh still failing
@@ -62,7 +59,7 @@ Nothing in that diff said _why_ the rename was happening. The note said the goal
 
 ## It reads your Claude Code session
 
-The obvious objection to this tool is _"I'm already in a Claude Code session — I'll just ask it to write me a handoff doc."_ That is fair, and the answer is not to compete with it. Claude Code **witnessed** your reasoning. `wherewasi` only ever saw the residue: a diff, some mtimes. So it reads the session instead of guessing at it, and keeps the automatic triggering a handoff doc does not have.
+The obvious objection to this tool is _"I'm already in a Claude Code session — I'll just ask it to write me a handoff doc."_ Claude Code witnessed your reasoning. With `--with-session`, `wherewasi` can use selected turns as evidence for a checkpoint that a human or another agent can read later.
 
 `resume` tells you which kind of answer you are holding:
 
@@ -81,26 +78,26 @@ versus
 
 Reading an AI conversation is a bigger step than reading a diff, so here is all of it, plainly:
 
-|                    |                                                                                                                             |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| **Where from**     | `~/.claude/projects/<encoded repo path>/<session>.jsonl` — the newest session whose records match this repo                 |
-| **What**           | up to 8 recent turns of **your messages and the assistant's replies**, capped at 1,500 characters per turn and 4,500 total  |
-| **Never**          | `thinking` blocks, tool calls, tool output, or any session belonging to another repo                                        |
-| **Where it goes**  | into the one `pause` request, to the endpoint you configured — the same call the diff already goes to                       |
-| **What is stored** | provenance only: source, session id, turn count. **The turns are never written to disk.**                                   |
-| **Redaction**      | the same secret-stripping as the diff, applied to every turn — people paste keys into chat far more casually than into code |
+|                      |                                                                                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Where from**       | `~/.claude/projects/<encoded repo path>/<session>.jsonl` — the newest session whose records match this repo                              |
+| **What**             | when enabled, up to 8 recent turns of **your messages and the assistant's replies**, capped at 1,500 characters per turn and 5,500 total |
+| **Never by default** | `thinking` blocks; they require a separate `--with-thinking` choice. Tool calls and tool output are not read.                            |
+| **Where it goes**    | into the one `pause` request, to the endpoint you configured — the same call the diff already goes to                                    |
+| **What is stored**   | provenance only: source, session id, turn count. **The turns are never written to disk.**                                                |
+| **Redaction**        | the same secret-stripping as the diff, applied to every turn — people paste keys into chat far more casually than into code              |
 
-Two separate switches, because "read my session" and "read the model's reasoning" are different questions:
+Both kinds of session access are opt-in:
 
 ```sh
-wherewasi pause --no-thinking     # read the session, leave the reasoning out
-wherewasi pause --no-session      # read nothing
+wherewasi pause --with-session    # read recent speech, exclude reasoning
+wherewasi pause --with-thinking   # include speech and assistant reasoning
 
-export WHEREWASI_NO_THINKING=1    # persist either one
-export WHEREWASI_NO_SESSION=1
+export WHEREWASI_WITH_SESSION=1   # persist the first choice
 ```
 
-`--no-thinking` gives the whole budget back to speech rather than leaving a hole in it.
+`--no-session` and `--no-thinking` override the environment settings for one pause.
+`--actor codex` never ingests a Claude Code transcript, so an earlier Claude conversation cannot override the current Codex checkpoint.
 
 The first time a transcript is actually ingested, `pause` says so once, rather than leaving it to this file to be read.
 
@@ -112,13 +109,13 @@ Claude Code only for now. No Cursor, no others.
 
 ## Local-first. Read this part.
 
-Your code does not go anywhere. Concretely:
+Your checkpoints are stored locally. When you configure a hosted model, the selected diff, note, command output, and any enabled session turns are sent to that endpoint during `pause`:
 
-- **Everything is stored on your machine**, under `~/.wherewasi/`. Nothing is uploaded, synced or backed up.
-- **Nothing is ever written into your repo.** Not a dotfile, not a `.gitignore` entry. Storage lives in your home directory only.
+- **Checkpoint files stay on your machine**, under `~/.wherewasi/`. The tool does not sync or back them up. Configuring a hosted model sends selected evidence for analysis, as described above.
+- **Checkpoint storage stays outside your repo**, in your home directory. `install-hook` writes an opt-in Git hook under the repo's Git directory.
 - **No server, no daemon, no telemetry, no account.** The binary runs and exits. Nothing is resident. If you opt into [automatic capture](#capturing-without-remembering-to), a `pause` is spawned detached by your git hook or shell and exits the same way — still no daemon, still nothing running between captures.
-- **Exactly one network call**, during `pause`, to whichever inference endpoint you configured. `resume` and `list` make none.
-- **Secrets are stripped before that call, and again before the file is written** — `sk-`, `gh*_`, `AKIA`, `Bearer`, and `password`/`secret`/`token`/`api_key` assignments. Applied to the diff, your note, any piped output, and every ingested session turn. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
+- **Only analysis uses the configured inference endpoint.** `resume`, `list`, and `handoff` do not call it. A provider may retry a failed request.
+- **Best-effort redaction** catches common key shapes and assignments before analysis and storage. It cannot guarantee removal of every credential or sensitive code. Review what you capture before using a hosted endpoint. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
 
 ### Or make it zero network calls
@@ -136,6 +133,16 @@ No API key is required for a local endpoint. This is verified, not theoretical �
 ---
 
 ## Install
+
+The npm package is not published yet. From a local checkout:
+
+```sh
+pnpm install
+pnpm build
+node dist/cli.js pause "what you were doing"
+```
+
+After the first npm release:
 
 ```sh
 npx wherewasi pause          # zero install
@@ -230,6 +237,21 @@ pnpm test 2>&1 | wherewasi pause "auth failing"
 ### `wherewasi resume [tag] [--open]`
 
 Prints the most recent pause: summary, hypothesis, ruled-out list, working set with reasons, next step, and how long ago. `--open` opens the working set in `$EDITOR`, skipping files that no longer exist.
+
+### `wherewasi handoff [tag] [--json]`
+
+Reads a task checkpoint for a human or coding agent. Unlike `resume`, it follows the same Git repository across linked worktrees. It prints the developer note, the model's reconstruction (clearly labeled), the saved Git revision, and whether the current tracked changes still match. `--json` emits a versioned object for tools. A `changed` or `unverified` result means the receiver must inspect the current files before continuing.
+
+To move a task from Claude Code to Codex, save it under a tag, then ask Codex to run the handoff command in the same repo or a linked worktree:
+
+```sh
+wherewasi pause --tag token-refresh --actor claude-code --with-session "refresh still fails after expiry"
+wherewasi handoff token-refresh           # Codex reads this before continuing
+wherewasi handoff token-refresh --json    # machine-readable form
+wherewasi pause --tag token-refresh --actor codex "fixed the stale import; next verify refresh behavior"
+```
+
+The checkpoint is task state, not an agent transcript. The receiving agent should verify it against the current tree and update the same tag before handing work back. No agent integration is installed automatically; both agents can invoke the CLI explicitly.
 
 ### Several investigations at once
 
@@ -441,7 +463,7 @@ One JSON file per pause, holding the raw captured state plus the analysis. Repos
 
 No daemon. No background process. No editor plugin. No web UI. No team features. No config file. No settings.
 
-If it isn’t `pause`, `resume`, `list` or `status`, it isn’t in here.
+The CLI focuses on `pause`, `resume`, `handoff`, `list`, and `status`.
 
 ---
 
@@ -449,7 +471,7 @@ If it isn’t `pause`, `resume`, `list` or `status`, it isn’t in here.
 
 ```sh
 pnpm install
-pnpm test        # 239 tests: capture, storage, redaction, formatting, hooks, transcripts, status, validation, both provider wire formats
+pnpm test        # capture, storage, handoffs, redaction, formatting, hooks, transcripts, status, validation, both provider wire formats
 pnpm build
 ```
 
