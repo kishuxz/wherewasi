@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildPrompt, SYSTEM_PROMPT } from "./analyze.js";
 import { isLocalEndpoint, OpenAICompatibleProvider } from "./providers/index.js";
+import { redact } from "./redact.js";
 import { rootDir } from "./storage.js";
 import type { Provider } from "./providers/types.js";
 import type { Transcript } from "./transcript.js";
@@ -63,4 +64,21 @@ export async function recordHostedConsent(
 /** The prompt text passed to either provider's complete() call. */
 export function hostedPreview(state: CapturedState, transcript?: Transcript | null): string {
   return `SYSTEM PROMPT\n${SYSTEM_PROMPT}\n\nUSER PROMPT\n${buildPrompt(state, transcript)}\n`;
+}
+
+/** Shared at-rest scrub for human and agent checkpoints. */
+export function redactCapturedState(state: CapturedState): CapturedState {
+  return {
+    ...state,
+    git: {
+      ...state.git,
+      diff: redact(state.git.diff),
+      stagedDiff: redact(state.git.stagedDiff),
+      status: redact(state.git.status),
+      log: redact(state.git.log),
+    },
+    note: state.note ? redact(state.note) : null,
+    input: state.input ? redact(state.input) : null,
+    recentFiles: state.recentFiles.map((file) => ({ ...file, path: redact(file.path) })),
+  };
 }

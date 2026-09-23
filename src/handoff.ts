@@ -1,7 +1,18 @@
 import path from "node:path";
 import { captureGit, findRepoId, findRepoRoot } from "./capture.js";
-import { listRepos } from "./storage.js";
-import type { Analysis, GitState, Session } from "./types.js";
+import { listRepos, saveSession, withTaskLock } from "./storage.js";
+import type { Analysis, CapturedState, GitState, Session } from "./types.js";
+
+export function checkpointToken(session: Session): string {
+  return session.checkpointId ?? session.savedAt;
+}
+
+export class CheckpointConflictError extends Error {
+  constructor(readonly currentCheckpointId: string | null) {
+    super("Task checkpoint changed since you read it; get_handoff again before updating.");
+    this.name = "CheckpointConflictError";
+  }
+}
 
 async function sessionsForRepository(cwd: string, home?: string): Promise<Session[]> {
   const repoPath = (await findRepoRoot(cwd)) ?? path.resolve(cwd);
@@ -17,6 +28,7 @@ async function sessionsForRepository(cwd: string, home?: string): Promise<Sessio
 
 export interface HandoffTask {
   task: string | null;
+  checkpointId: string;
   savedAt: string;
   actor: Session["actor"] | "unknown";
   note: string | null;
@@ -36,6 +48,7 @@ export async function listHandoffTasks(
     seen.add(task);
     tasks.push({
       task,
+      checkpointId: checkpointToken(session),
       savedAt: session.savedAt,
       actor: session.actor ?? "unknown",
       note: session.note,
@@ -44,9 +57,44 @@ export async function listHandoffTasks(
   return tasks;
 }
 
+/** Append one tagged revision; a supplied expected id prevents stale agent writes. */
+export async function appendTaskCheckpoint(
+  state: CapturedState,
+  extra: Pick<Session, "analysis" | "analysisError" | "trigger" | "tag" | "actor">,
+  opts: { home?: string; expectedCheckpointId?: string; now?: Date } = {},
+): Promise<{ session: Session; file: string }> {
+  const tag = extra.tag?.trim();
+  if (!tag) throw new Error("A tagged checkpoint needs a task name.");
+  const identity = state.repoId ?? state.repoPath;
+  return withTaskLock(
+    identity,
+    tag,
+    async () => {
+      const latest = (await sessionsForRepository(state.repoPath, opts.home)).find(
+        (session) => session.tag === tag,
+      );
+      if (
+        opts.expectedCheckpointId !== undefined &&
+        (!latest || checkpointToken(latest) !== opts.expectedCheckpointId)
+      ) {
+        throw new CheckpointConflictError(latest ? checkpointToken(latest) : null);
+      }
+      // Distinct revisions need a deterministic order even if they arrive in
+      // the same millisecond from two agents.
+      const now = new Date((opts.now ?? new Date()).getTime());
+      if (latest && now.getTime() <= new Date(latest.savedAt).getTime()) {
+        now.setTime(new Date(latest.savedAt).getTime() + 1);
+      }
+      return saveSession(state, { ...extra, tag }, { home: opts.home, now });
+    },
+    opts.home,
+  );
+}
+
 export interface Handoff {
   schemaVersion: 1;
   task: string | null;
+  checkpointId: string;
   savedAt: string;
   actor: Session["actor"] | "unknown";
   source: "claude-code-session" | "note-and-repository";
@@ -59,6 +107,7 @@ export interface Handoff {
     currentHead: string | null;
   };
   verification: { status: "current" | "changed" | "unverified"; reasons: string[] };
+  /** Legacy JSON key; inspect actor to distinguish a human from an agent note. */
   developerNote: string | null;
   analysis: Analysis | null;
   analysisError: string | null;
@@ -108,6 +157,7 @@ export async function loadHandoff(
   return {
     schemaVersion: 1,
     task: session.tag ?? null,
+    checkpointId: checkpointToken(session),
     savedAt: session.savedAt,
     actor: session.actor ?? "unknown",
     source: session.transcript ? "claude-code-session" : "note-and-repository",
@@ -142,6 +192,7 @@ export function formatHandoff(handoff: Handoff): string {
     `# wherewasi handoff${handoff.task ? `: ${handoff.task}` : ""}`,
     "",
     `Saved: ${handoff.savedAt} by ${handoff.actor} (${handoff.source})`,
+    `Checkpoint: ${handoff.checkpointId}`,
     `Repository: ${handoff.repository.savedPath}`,
     `Current location: ${handoff.repository.currentPath}`,
     `Git: ${handoff.repository.savedBranch} ${handoff.repository.savedHead ?? "unknown HEAD"}`,
@@ -154,7 +205,15 @@ export function formatHandoff(handoff: Handoff): string {
         ? "- The captured diff was truncated; inspect the current files."
         : `- The captured diff was sampled; ${handoff.omittedDiffFiles} file sections were omitted and shown sections may be partial. Inspect the current files.`,
     );
-  if (handoff.developerNote) out.push("", "## Developer note", handoff.developerNote);
+  if (handoff.developerNote) {
+    const heading =
+      handoff.actor === "human"
+        ? "Developer note"
+        : handoff.actor === "unknown"
+          ? "Checkpoint note (author unknown)"
+          : `Agent note (${handoff.actor})`;
+    out.push("", `## ${heading}`, handoff.developerNote);
+  }
   if (handoff.analysis) {
     const a = handoff.analysis;
     out.push(
@@ -175,7 +234,7 @@ export function formatHandoff(handoff: Handoff): string {
     out.push("", "## Captured command output (tail)", "```text", handoff.capturedOutputTail, "```");
   out.push(
     "",
-    'Check the current repository state before continuing. Update the task with `wherewasi pause --tag <task> "what changed and what is next"`.',
+    'Check the current repository state before continuing. Agents can call `update_task` with this checkpoint id; a human can run `wherewasi pause --tag <task> "what changed and what is next"`.',
   );
   return `${out.join("\n")}\n`;
 }

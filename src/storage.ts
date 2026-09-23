@@ -7,6 +7,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rmdir,
   rm,
   unlink,
   writeFile,
@@ -19,6 +20,43 @@ export const APP_DIR_NAME = ".wherewasi";
 /** Storage always lives under the home directory — never inside the user's repo. */
 export function rootDir(home = homedir()): string {
   return path.join(home, APP_DIR_NAME);
+}
+
+/** Serialize task revisions across agents and linked worktrees on this machine. */
+export async function withTaskLock<T>(
+  repository: string,
+  tag: string,
+  work: () => Promise<T>,
+  home = homedir(),
+): Promise<T> {
+  const root = path.join(rootDir(home), "locks");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await chmod(rootDir(home), 0o700);
+  await chmod(root, 0o700);
+  const key = createHash("sha256").update(repository).update("\0").update(tag).digest("hex");
+  const lock = path.join(root, key);
+  let acquired = false;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      await mkdir(lock, { mode: 0o700 });
+      acquired = true;
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = await lstat(lock).catch(() => null);
+      if (existing?.isSymbolicLink()) throw new Error("task lock is a symlink", { cause: error });
+      if (existing?.isDirectory() && Date.now() - existing.mtimeMs > 120_000) {
+        await rmdir(lock).catch(() => {});
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  if (!acquired) throw new Error("task is busy; retry the checkpoint update");
+  try {
+    return await work();
+  } finally {
+    await rmdir(lock).catch(() => {});
+  }
 }
 
 export interface PermissionAudit {
@@ -93,7 +131,7 @@ export async function saveSession(
 ): Promise<{ session: Session; file: string }> {
   const home = opts.home ?? homedir();
   const savedAt = (opts.now ?? new Date()).toISOString();
-  const session: Session = { version: 1, savedAt, ...state, ...extra };
+  const session: Session = { version: 1, checkpointId: randomUUID(), savedAt, ...state, ...extra };
 
   const dir = sessionsDir(state.repoPath, home);
   const root = rootDir(home);
