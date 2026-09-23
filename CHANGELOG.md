@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Model-generated working-set paths must appear in captured file, diff, note, session, or command-output evidence; unsupported paths cause a raw-state fallback.
 - `install-hook` now honors repo-local `core.hooksPath` and refuses to write into a shared hooks directory outside the repository. The post-checkout capture is described as arrival state, separate from the before-switch checkpoint.
 - Claude Code conversation access now requires `--with-session` or `WHEREWASI_WITH_SESSION=1`. Assistant reasoning requires the separate `--with-thinking` choice. The first-use notice appears before analysis.
 - Session files are published atomically with private permissions. Captures in the same millisecond no longer overwrite each other.

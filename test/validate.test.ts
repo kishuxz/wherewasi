@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { analyze, parseAnalysis, validateAnalysis } from "../src/analyze.js";
+import { analyze, parseAnalysis, validateAnalysis, validateEvidencePaths } from "../src/analyze.js";
 import type { Analysis, CapturedState } from "../src/types.js";
 import type { Provider } from "../src/providers/types.js";
 
@@ -132,6 +132,57 @@ describe("parseAnalysis strictness", () => {
   });
 });
 
+describe("evidence-backed working set", () => {
+  const state: CapturedState = {
+    repoPath: "/repo",
+    git: {
+      isRepo: true,
+      branch: "main",
+      diff: "diff --git a/src/auth.ts b/src/auth.ts",
+      stagedDiff: "",
+      log: "",
+      status: " M src/auth.ts",
+      diffTruncated: false,
+      stagedDiffTruncated: false,
+    },
+    recentFiles: [{ path: "src/auth.ts", mtime: "2026-01-15T11:55:00.000Z" }],
+    note: null,
+    input: "FAIL src/auth.test.ts: expected 401",
+  };
+
+  it("accepts changed files and exact paths from captured failures", () => {
+    expect(
+      validateEvidencePaths(
+        { ...good, working_set: ["src/auth.ts — the cause", "src/auth.test.ts — failing test"] },
+        state,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a plausible file that exists only in the model response", () => {
+    expect(
+      validateEvidencePaths({ ...good, working_set: ["src/does-not-exist.ts — blocker"] }, state),
+    ).toContain("not present in the captured evidence");
+  });
+
+  it("does not treat another file's name as evidence for a path", () => {
+    const renamedState = {
+      ...state,
+      recentFiles: [],
+      git: { ...state.git, status: " M src/auth.ts.bak" },
+    };
+    expect(
+      validateEvidencePaths(
+        { ...good, working_set: ["src/auth.ts — cause"] },
+        {
+          ...renamedState,
+          git: { ...renamedState.git, diff: "" },
+        },
+      ),
+    ).toContain("not present in the captured evidence");
+  });
+});
+
 describe("degradation", () => {
   const state: CapturedState = {
     repoPath: "/repo",
@@ -145,7 +196,10 @@ describe("degradation", () => {
       diffTruncated: false,
       stagedDiffTruncated: false,
     },
-    recentFiles: [],
+    recentFiles: [
+      { path: "packages/collector/src/index.ts", mtime: "2026-01-15T11:55:00.000Z" },
+      { path: "packages/guard/src/index.ts", mtime: "2026-01-15T11:55:00.000Z" },
+    ],
     note: null,
     input: null,
   };
@@ -167,5 +221,12 @@ describe("degradation", () => {
     const result = await analyze(state, { provider: providerReturning(good) });
     expect(result.analysis).toEqual(good);
     expect(result.error).toBeNull();
+  });
+
+  it("falls back to raw state when the model invents a file", async () => {
+    const invented = { ...good, working_set: ["src/fictional.ts — blocks the build"] };
+    const result = await analyze(state, { provider: providerReturning(invented) });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toContain("src/fictional.ts");
   });
 });
