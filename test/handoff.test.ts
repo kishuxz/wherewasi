@@ -45,6 +45,7 @@ describe("portable task handoff", () => {
     expect(handoff?.repository.currentPath).toBe(worktree);
     expect(handoff?.verification.status).toBe("changed");
     expect(formatHandoff(handoff!)).toContain("Check the current repository state");
+    expect(formatHandoff(handoff!)).toContain("## Agent note (claude-code)");
   });
 
   it("detects edits made after the checkpoint even when Git status names the same file", async () => {

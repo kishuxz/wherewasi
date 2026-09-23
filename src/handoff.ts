@@ -107,6 +107,7 @@ export interface Handoff {
     currentHead: string | null;
   };
   verification: { status: "current" | "changed" | "unverified"; reasons: string[] };
+  /** Legacy JSON key; inspect actor to distinguish a human from an agent note. */
   developerNote: string | null;
   analysis: Analysis | null;
   analysisError: string | null;
@@ -204,7 +205,15 @@ export function formatHandoff(handoff: Handoff): string {
         ? "- The captured diff was truncated; inspect the current files."
         : `- The captured diff was sampled; ${handoff.omittedDiffFiles} file sections were omitted and shown sections may be partial. Inspect the current files.`,
     );
-  if (handoff.developerNote) out.push("", "## Developer note", handoff.developerNote);
+  if (handoff.developerNote) {
+    const heading =
+      handoff.actor === "human"
+        ? "Developer note"
+        : handoff.actor === "unknown"
+          ? "Checkpoint note (author unknown)"
+          : `Agent note (${handoff.actor})`;
+    out.push("", `## ${heading}`, handoff.developerNote);
+  }
   if (handoff.analysis) {
     const a = handoff.analysis;
     out.push(
@@ -225,7 +234,7 @@ export function formatHandoff(handoff: Handoff): string {
     out.push("", "## Captured command output (tail)", "```text", handoff.capturedOutputTail, "```");
   out.push(
     "",
-    'Check the current repository state before continuing. Update the task with `wherewasi pause --tag <task> "what changed and what is next"`.',
+    'Check the current repository state before continuing. Agents can call `update_task` with this checkpoint id; a human can run `wherewasi pause --tag <task> "what changed and what is next"`.',
   );
   return `${out.join("\n")}\n`;
 }
