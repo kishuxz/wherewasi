@@ -436,18 +436,18 @@ Measured, not hypothetical. Each links the open issue tracking it.
 
 `working_set` flags files that block your next step — a package that fails to compile, the source of a failing test — even when they have nothing to do with your hypothesis. That detection works off the output you pipe in. Run `wherewasi pause` with no piped command output and a broken build in a file you didn't touch will not be mentioned, because nothing in the diff reveals it. Pipe your test command in and it will. ([#42](https://github.com/kishuxz/wherewasi/issues/42))
 
-### Large diffs shrink the working set — but they now say so
+### Large diffs can leave out evidence
 
-Diffs are capped at 8000 characters each. On a large diff, hunks past the cut are invisible to the model, and `working_set` narrows accordingly — in testing, from 4 entries to 2. Inference quality held; _coverage_ dropped.
+Diffs are capped at 8000 characters each. When a diff is larger, capture samples file sections across the whole diff, including the first and last changed files. Long sections are shortened, and a very large number of changed files can still leave some out. The checkpoint records how many file sections were omitted.
 
-This used to be silent, which was the dangerous part. `resume` now says so directly:
+`resume` says so directly:
 
 ```
-  ⚠ The unstaged diff was truncated at 8000 chars — anything past the cut
-  was not analysed, so this working set may be incomplete.
+  ⚠ Diff evidence was sampled across files at 8000 chars: unstaged (3 files
+  omitted). Shown file sections may also be partial; inspect current files.
 ```
 
-The coverage loss itself is still real — the warning tells you to go look, it doesn't recover the hunks. ([#25](https://github.com/kishuxz/wherewasi/issues/25))
+This improves coverage across files but cannot guarantee that a specific hunk was included. ([#84](https://github.com/kishuxz/wherewasi/issues/84))
 
 ### The free-tier request ceiling is real
 

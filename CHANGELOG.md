@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Large diffs now sample file sections across the full change and report omitted file counts in `resume` and `handoff`.
 - Redaction now covers common database connection URLs, private-key blocks, and credential-file paths in stored checkpoints and model prompts.
 - Use Commander 14 so the installed package actually supports the advertised Node 20 minimum.
 - Model-generated working-set paths must appear in captured file, diff, note, session, or command-output evidence; unsupported paths cause a raw-state fallback.
