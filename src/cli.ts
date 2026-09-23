@@ -18,6 +18,7 @@ import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
 import { redact } from "./redact.js";
 import {
+  auditCheckpointPermissions,
   hasAnySession,
   latestSession,
   listSessions,
@@ -38,6 +39,12 @@ import {
 } from "./format.js";
 import { formatStatus, toRow } from "./status.js";
 import { formatHandoff, loadHandoff } from "./handoff.js";
+import {
+  hasHostedConsent,
+  hostedDestination,
+  hostedPreview,
+  recordHostedConsent,
+} from "./privacy.js";
 import {
   DEBUG_ENV,
   SHELLS,
@@ -180,6 +187,7 @@ async function cmdPause(
     withSession?: boolean;
     withThinking?: boolean;
     actor?: string;
+    localOnly?: boolean;
   },
 ): Promise<void> {
   const paint = makePaint();
@@ -253,6 +261,7 @@ async function cmdPause(
     },
     note: state.note ? redact(state.note) : null,
     input: state.input ? redact(state.input) : null,
+    recentFiles: state.recentFiles.map((file) => ({ ...file, path: redact(file.path) })),
   };
 
   // Conversation access is opt-in and checked before anything is read.
@@ -290,16 +299,48 @@ async function cmdPause(
   // counts as a first run. Only needed on the keyless path.
   const sessionsExisted = hasKey || opts.auto || (await hasAnySession());
 
-  if (hasKey && !opts.auto) {
+  let withheld: string | null = null;
+  const destination = selection.provider ? hostedDestination(selection.provider) : null;
+  const consentScope = stateWithSession.repoId ?? stateWithSession.repoPath;
+  if (destination && (opts.localOnly || process.env["WHEREWASI_LOCAL_ONLY"] === "1")) {
+    withheld = "hosted analysis disabled; raw state saved locally";
+  } else if (destination && !(await hasHostedConsent(destination, consentScope))) {
+    if (opts.auto || !process.stdin.isTTY) {
+      withheld =
+        "hosted analysis withheld until you review its prompt in an interactive `wherewasi pause`";
+    } else {
+      let display = destination;
+      try {
+        display = new URL(destination).origin;
+      } catch {
+        // The provider will report an invalid URL if the user proceeds.
+      }
+      say(
+        `\n  First hosted analysis for this repository at ${display} (${selection.provider!.model}).\n`,
+      );
+      say("  The following is the exact system and user prompt content that would be sent:\n\n");
+      say(hostedPreview(stateWithSession, transcript));
+      say(
+        "\n  To keep this checkpoint local, decline. Set WHEREWASI_LOCAL_ONLY=1 for future pauses,\n" +
+          "  or configure WHEREWASI_BASE_URL to a local model endpoint.\n\n",
+      );
+      if (await confirm("  Send this prompt to the hosted model? [y/N] ")) {
+        await recordHostedConsent(destination, consentScope);
+      } else {
+        withheld = "hosted analysis declined; raw state saved locally";
+      }
+    }
+  }
+
+  if (hasKey && !withheld && !opts.auto) {
     process.stderr.write(
       paint(`  reconstructing context via ${selection.provider!.model}…\n`, "dim"),
     );
   }
 
-  const { analysis, error } = await analyze(stateWithSession, {
-    provider: selection.provider,
-    transcript,
-  });
+  const { analysis, error } = withheld
+    ? { analysis: null, error: withheld }
+    : await analyze(stateWithSession, { provider: selection.provider, transcript });
   const { session, file } = await saveSession(stateWithSession, {
     analysis,
     analysisError: error,
@@ -654,6 +695,7 @@ program
   .option("--with-session", "include recent Claude Code turns for this repo")
   .option("--with-thinking", "also include assistant reasoning (implies --with-session)")
   .option("--no-thinking", "exclude assistant reasoning even if enabled in the environment")
+  .option("--local-only", "save raw state without sending it to a hosted model")
   .option("--auto", "triggered automatically: print nothing, debounce, never fail", false)
   .description("capture what you were working on, and why")
   .action(
@@ -668,6 +710,7 @@ program
         withSession?: boolean;
         withThinking?: boolean;
         actor?: string;
+        localOnly?: boolean;
       },
     ) => {
       await cmdPause(note, opts);
@@ -700,6 +743,22 @@ program
   .action(async (opts: { repo?: string }) => {
     const { runMcp } = await import("./mcp.js");
     await runMcp(opts.repo ?? process.cwd());
+  });
+
+program
+  .command("privacy")
+  .option("--fix-permissions", "tighten older checkpoint files and directories to private modes")
+  .description("inspect permissions of locally stored checkpoints")
+  .action(async (opts: { fixPermissions?: boolean }) => {
+    const result = await auditCheckpointPermissions({ fix: opts.fixPermissions });
+    process.stdout.write(
+      `Checked ${result.checked} checkpoint paths; ${result.tooBroad} had broader permissions.` +
+        (opts.fixPermissions
+          ? ` Tightened ${result.fixed}.`
+          : " Run with --fix-permissions to tighten them.") +
+        (result.skippedLinks ? ` Skipped ${result.skippedLinks} symlink(s).` : "") +
+        "\n",
+    );
   });
 
 program

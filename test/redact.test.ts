@@ -27,6 +27,12 @@ describe("redact", () => {
     ["yaml token", "  token: gAAAAABlongopaquevalue"],
     ["api_key with spaces", "api_key = 'abcdef123456'"],
     ["API-KEY uppercase", "API-KEY: 9f8e7d6c5b4a"],
+    ["Postgres URL", "DATABASE_URL=postgresql://dev:fakepass@db.internal:5432/app"],
+    ["MongoDB URL", "mongodb+srv://test:fakepass@cluster.invalid/app"],
+    ["Redis URL", "redis://:fakepass@localhost:6379/0"],
+    ["SSH key path", "/Users/developer/.ssh/id_ed25519"],
+    ["AWS credential path", "/home/developer/.aws/credentials"],
+    ["environment file", "src/.env.production"],
   ];
 
   for (const [name, line] of cases) {
@@ -48,6 +54,12 @@ describe("redact", () => {
         "gAAAAABlongopaquevalue",
         "abcdef123456",
         "9f8e7d6c5b4a",
+        "postgresql://dev:fakepass@db.internal:5432/app",
+        "mongodb+srv://test:fakepass@cluster.invalid/app",
+        "redis://:fakepass@localhost:6379/0",
+        "/Users/developer/.ssh/id_ed25519",
+        "/home/developer/.aws/credentials",
+        "src/.env.production",
       ]) {
         expect(out).not.toContain(secret);
       }
@@ -96,5 +108,13 @@ describe("redact", () => {
 
   it("handles empty input", () => {
     expect(redact("")).toBe("");
+  });
+
+  it("removes complete and incomplete multiline private keys", () => {
+    const complete =
+      "before\n-----BEGIN PRIVATE KEY-----\nFAKEKEYBODY\n-----END PRIVATE KEY-----\nafter";
+    expect(redact(complete)).toBe(`before\n${REDACTED}\nafter`);
+    const incomplete = "before\n-----BEGIN RSA PRIVATE KEY-----\nFAKEKEYBODY";
+    expect(redact(incomplete)).toBe(`before\n${REDACTED}`);
   });
 });

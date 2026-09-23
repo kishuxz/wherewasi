@@ -84,4 +84,63 @@ describe("installed-style CLI handoff", () => {
     expect(session?.git.branch).toBe("main");
     expect(session?.note).toBe("investigating auth");
   });
+
+  it("stores redacted credential paths and connection strings", async () => {
+    const repo = await FixtureRepo.create();
+    cleanups.push(() => repo.cleanup());
+    await repo.write("app.ts", "export const app = true;\n");
+    await repo.commit("base");
+    await repo.write(
+      "src/.env.production",
+      "DATABASE_URL=postgresql://dev:fakepass@db.invalid/app\n",
+    );
+    const home = await tempHome();
+    cleanups.push(home.cleanup);
+    await execFileAsync(
+      CLI,
+      [SOURCE, "pause", "--tag", "privacy", "read /Users/developer/.ssh/id_ed25519"],
+      {
+        cwd: repo.dir,
+        env: { ...process.env, HOME: home.dir, WHEREWASI_API_KEY: "", GROQ_API_KEY: "" },
+      },
+    );
+    const session = (await listSessions(repo.dir, { home: home.dir }))[0];
+    const saved = JSON.stringify(session);
+    expect(saved).not.toContain("src/.env.production");
+    expect(saved).not.toContain("/Users/developer/.ssh/id_ed25519");
+    expect(saved).not.toContain("postgresql://dev:fakepass@db.invalid/app");
+    expect(saved).toContain("[REDACTED]");
+  });
+
+  it("withholds a first hosted request in a noninteractive pause", async () => {
+    const repo = await FixtureRepo.create();
+    cleanups.push(() => repo.cleanup());
+    await repo.write("app.ts", "export const app = true;\n");
+    await repo.commit("base");
+    const home = await tempHome();
+    cleanups.push(home.cleanup);
+    const env = {
+      ...process.env,
+      HOME: home.dir,
+      WHEREWASI_API_KEY: "synthetic-key",
+      WHEREWASI_BASE_URL: "https://example.invalid/v1",
+    };
+    await execFileAsync(CLI, [SOURCE, "pause", "--tag", "hosted", "investigate expiry"], {
+      cwd: repo.dir,
+      env,
+    });
+    const session = (await listSessions(repo.dir, { home: home.dir }))[0];
+    expect(session?.analysis).toBeNull();
+    expect(session?.analysisError).toContain("hosted analysis withheld");
+    await execFileAsync(
+      CLI,
+      [SOURCE, "pause", "--tag", "local", "investigate expiry", "--local-only"],
+      {
+        cwd: repo.dir,
+        env,
+      },
+    );
+    const latest = (await listSessions(repo.dir, { home: home.dir }))[0];
+    expect(latest?.analysisError).toContain("hosted analysis disabled");
+  });
 });

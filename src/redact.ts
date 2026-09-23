@@ -14,6 +14,24 @@ interface Rule {
 
 const RULES: Rule[] = [
   {
+    // A PEM block may span the rest of a captured diff if it is incomplete.
+    name: "private key block",
+    pattern: /-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g,
+    replace: () => REDACTED,
+  },
+  {
+    name: "database or broker connection URL",
+    pattern:
+      /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?|amqp(?:s)?|mssql):\/\/[^\s"'`<>]+/gi,
+    replace: () => REDACTED,
+  },
+  {
+    name: "credential file path",
+    pattern:
+      /(?:~\/|\.\/|\/)?(?:[A-Za-z0-9_.-]+\/)*(?:\.env(?:\.[A-Za-z0-9_-]+)?|\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)|\.aws\/credentials|\.config\/gcloud\/application_default_credentials\.json)(?![A-Za-z0-9_.-])/g,
+    replace: () => REDACTED,
+  },
+  {
     // Anthropic / OpenAI / Stripe style: sk-…, sk-ant-api03-…, sk_live_…
     name: "sk-prefixed key",
     pattern: /\bsk[-_][A-Za-z0-9_-]{8,}/g,
