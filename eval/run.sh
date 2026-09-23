@@ -56,6 +56,7 @@ run() {
   # Written for both arms, so repo and session state are identical and the
   # only difference is whether the tool is allowed to read it.
   python3 "$SESSION" "$R" "$H" >/dev/null
+  node "$ROOT/eval/approve-fixture.mjs" "$R" "$H"
 
   FLAG=""
   [ "$SESSION_ON" = "off" ] && FLAG="--no-session"
@@ -98,6 +99,7 @@ pace
 T=$(mktemp -d); H="$T/home"; R="$T/repo"; mkdir -p "$H"
 sh "$SCEN" "$R" >/dev/null
 python3 "$SESSION" "$R" "$H" >/dev/null
+node "$ROOT/eval/approve-fixture.mjs" "$R" "$H"
 mkdir -p "$R/packages/examples/src/generated"
 i=1; while [ "$i" -le 40 ]; do
   printf 'export const gen%s = %s;\n' "$i" "$i" > "$R/packages/examples/src/generated/gen$i.ts"
@@ -112,6 +114,7 @@ pace
 T=$(mktemp -d); H="$T/home"; R="$T/repo"; mkdir -p "$H"
 sh "$SCEN" "$R" >/dev/null
 python3 "$SESSION" "$R" "$H" >/dev/null
+node "$ROOT/eval/approve-fixture.mjs" "$R" "$H"
 ( cd "$R" && HOME="$H" WHEREWASI_API_KEY="$KEY" WHEREWASI_MODEL="$MODEL" NO_COLOR=1 \
   node "$CLI" pause "first" ) >/dev/null 2>&1 || true
 A=$(find "$H/.wherewasi" -name '*.json' | head -1); cp "$A" "$OUT/6-anchor-first.json"
@@ -129,6 +132,7 @@ for M in "$MODEL" "llama-3.1-8b-instant"; do
   T=$(mktemp -d); H="$T/home"; R="$T/repo"; mkdir -p "$H"
   sh "$SCEN" "$R" >/dev/null
   python3 "$SESSION" "$R" "$H" >/dev/null
+  node "$ROOT/eval/approve-fixture.mjs" "$R" "$H"
   SAFE=$(printf '%s' "$M" | tr '/.' '__')
   ( cd "$R" && HOME="$H" WHEREWASI_MODEL="$M" WHEREWASI_API_KEY="$KEY" NO_COLOR=1 \
     node "$CLI" pause "$NOTE" ) > "$OUT/7-contam-$SAFE.stdout" 2>&1 || true
