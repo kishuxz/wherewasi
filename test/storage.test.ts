@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFile, stat } from "node:fs/promises";
+import { chmod, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  auditCheckpointPermissions,
   fileNameFor,
   hasAnySession,
   latestSession,
@@ -10,6 +11,7 @@ import {
   repoKey,
   sessionsDir,
   saveSession,
+  rootDir,
 } from "../src/storage.js";
 import { tempHome } from "./helpers/fixture-repo.js";
 import type { Analysis, CapturedState } from "../src/types.js";
@@ -117,6 +119,37 @@ describe("storage layer", () => {
     );
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect((await stat(path.dirname(file))).mode & 0o777).toBe(0o700);
+  });
+
+  it("audits and tightens older checkpoint modes without following links", async () => {
+    const { file } = await saveSession(
+      state(repoA),
+      { analysis: null, analysisError: null },
+      { home: home.dir },
+    );
+    const outside = path.join(home.dir, "outside.json");
+    await writeFile(outside, "{}", { mode: 0o644 });
+    await symlink(outside, path.join(path.dirname(file), "linked.json"));
+    for (const target of [
+      rootDir(home.dir),
+      path.join(rootDir(home.dir), "sessions"),
+      path.dirname(file),
+      file,
+    ]) {
+      await chmod(target, 0o755);
+    }
+
+    const audit = await auditCheckpointPermissions({ home: home.dir });
+    expect(audit.tooBroad).toBe(4);
+    expect(audit.fixed).toBe(0);
+    expect(audit.skippedLinks).toBe(1);
+    expect((await stat(file)).mode & 0o777).toBe(0o755);
+
+    const fixed = await auditCheckpointPermissions({ home: home.dir, fix: true });
+    expect(fixed.fixed).toBe(4);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(path.dirname(file))).mode & 0o777).toBe(0o700);
+    expect((await stat(outside)).mode & 0o777).toBe(0o644);
   });
 
   it("stores keyless pauses with the reason recorded", async () => {

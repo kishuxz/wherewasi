@@ -1,6 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { chmod, link, mkdir, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import type { CapturedState, Session } from "./types.js";
 
@@ -9,6 +19,57 @@ export const APP_DIR_NAME = ".wherewasi";
 /** Storage always lives under the home directory — never inside the user's repo. */
 export function rootDir(home = homedir()): string {
   return path.join(home, APP_DIR_NAME);
+}
+
+export interface PermissionAudit {
+  checked: number;
+  tooBroad: number;
+  fixed: number;
+  skippedLinks: number;
+}
+
+/** Inspect or tighten existing checkpoint modes without following symlinks. */
+export async function auditCheckpointPermissions(
+  opts: { home?: string; fix?: boolean } = {},
+): Promise<PermissionAudit> {
+  const root = rootDir(opts.home ?? homedir());
+  const result: PermissionAudit = { checked: 0, tooBroad: 0, fixed: 0, skippedLinks: 0 };
+  const inspect = async (file: string, directory: boolean): Promise<boolean> => {
+    let stat;
+    try {
+      stat = await lstat(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      result.skippedLinks++;
+      return false;
+    }
+    if (directory ? !stat.isDirectory() : !stat.isFile()) return false;
+    result.checked++;
+    const privateMode = directory ? 0o700 : 0o600;
+    if ((stat.mode & 0o077) !== 0) {
+      result.tooBroad++;
+      if (opts.fix) {
+        await chmod(file, privateMode);
+        result.fixed++;
+      }
+    }
+    return true;
+  };
+
+  if (!(await inspect(root, true))) return result;
+  const sessions = path.join(root, "sessions");
+  if (!(await inspect(sessions, true))) return result;
+  for (const bucket of await readdir(sessions, { withFileTypes: true })) {
+    const dir = path.join(sessions, bucket.name);
+    if (!(await inspect(dir, true))) continue;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.name.endsWith(".json")) await inspect(path.join(dir, entry.name), false);
+    }
+  }
+  return result;
 }
 
 /** Stable per-repo bucket: first 12 hex chars of sha256(absolute repo path). */

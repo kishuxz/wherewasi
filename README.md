@@ -116,6 +116,8 @@ Your checkpoints are stored locally. When you configure a hosted model, the sele
 - **No account, telemetry, or remote service.** Normal CLI commands run and exit. If you opt into the local MCP integration, your agent host keeps its stdio child process running while connected.
 - **Only analysis uses the configured inference endpoint.** `resume`, `list`, and `handoff` do not call it. A provider may retry a failed request.
 - **Best-effort redaction** catches common key shapes and assignments before analysis and storage. It cannot guarantee removal of every credential or sensitive code. Review what you capture before using a hosted endpoint. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
+- **First hosted request is reviewed.** An interactive `pause` prints the exact system and user prompt content and asks before sending from this repository to a hosted endpoint. Automatic and noninteractive pauses save raw state without hosted analysis until that approval exists. Decline to keep the checkpoint local, or use `--local-only` / `WHEREWASI_LOCAL_ONLY=1` to disable hosted analysis for a pause or session. A local model endpoint needs no hosted approval.
+- **Older checkpoint permissions can be checked.** `wherewasi privacy` reports broad permissions; `wherewasi privacy --fix-permissions` tightens existing checkpoint directories and JSON files without following symlinks.
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
 
 ### Or make it zero network calls
@@ -174,6 +176,8 @@ export WHEREWASI_API_KEY=...
 
 Both are real options, and the tradeoff is honest: a 7B local model is noticeably weaker than a 120B hosted one (see [Known limits](#known-limits)). Pick privacy or pick quality — the tool does not care, and `pause` tells you how to set either up the first time you run it without a key.
 
+On the first hosted `pause` for a repository and endpoint, review the printed prompt and approve it from an interactive terminal. Do this before piping a test run into `pause`: piped stdin is noninteractive, so a first piped pause keeps the raw checkpoint and makes no hosted request. `WHEREWASI_LOCAL_ONLY=1` keeps future pauses local even if a hosted key is configured.
+
 ---
 
 ## Configuring the model
@@ -215,7 +219,7 @@ There is no config file, and there won't be. `.env` is not loaded automatically 
 
 ## Commands
 
-### `wherewasi pause [note] [--since <when>] [--tag <name>]`
+### `wherewasi pause [note] [--since <when>] [--tag <name>] [--local-only]`
 
 Captures, in order:
 

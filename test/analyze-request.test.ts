@@ -3,6 +3,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { analyze } from "../src/analyze.js";
 import { AnthropicProvider, OpenAICompatibleProvider } from "../src/providers/index.js";
+import type { Provider } from "../src/providers/types.js";
 import type { CapturedState } from "../src/types.js";
 
 /**
@@ -109,6 +110,42 @@ const anthropic = () => {
 };
 
 describe("OpenAI-compatible provider", () => {
+  it("keeps common secrets out of the exact model prompt", async () => {
+    let outbound = "";
+    const provider: Provider = {
+      name: "openai-compatible",
+      model: "stub",
+      complete: async (request) => {
+        outbound = `${request.system}\n${request.user}`;
+        return { text: JSON.stringify(reply), model: "stub" };
+      },
+    };
+    await analyze(
+      {
+        ...state,
+        git: {
+          ...state.git,
+          diff: "+DATABASE_URL=postgresql://dev:fakepass@db.internal/app",
+        },
+        recentFiles: [
+          ...state.recentFiles,
+          { path: "src/.env.production", mtime: "2026-01-15T11:55:00.000Z" },
+        ],
+        note: "Check /Users/developer/.ssh/id_ed25519",
+        input: "-----BEGIN PRIVATE KEY-----\nFAKEKEYBODY\n-----END PRIVATE KEY-----",
+      },
+      { provider },
+    );
+    for (const secret of [
+      "postgresql://dev:fakepass@db.internal/app",
+      "src/.env.production",
+      "/Users/developer/.ssh/id_ed25519",
+      "FAKEKEYBODY",
+    ]) {
+      expect(outbound).not.toContain(secret);
+    }
+  });
+
   it("sends an OpenAI chat-completions request and parses the analysis", async () => {
     requests = [];
     respond = (res) => json(res, 200, groqOk(JSON.stringify(reply)));

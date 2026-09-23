@@ -108,7 +108,7 @@ export function buildPrompt(state: CapturedState, transcript?: Transcript | null
   const bulk = state.recentFiles.filter((f) => f.bulk);
 
   const render = (f: (typeof state.recentFiles)[number]) =>
-    `${f.path}\t${f.mtime}\t[${f.inGit ? "git-changed" : "mtime-only"}]`;
+    `${redact(f.path)}\t${f.mtime}\t[${f.inGit ? "git-changed" : "mtime-only"}]`;
 
   const lines = individual.map(render);
   if (bulk.length && BULK_SAMPLE === 0) {
