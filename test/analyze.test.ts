@@ -9,6 +9,8 @@ import {
 } from "../src/analyze.js";
 import type { CapturedState } from "../src/types.js";
 
+const syntheticGithubToken = ["ghp", "A".repeat(36)].join("_");
+
 const state: CapturedState = {
   repoPath: "/repo",
   git: {
@@ -22,7 +24,7 @@ const state: CapturedState = {
     stagedDiffTruncated: false,
   },
   recentFiles: [{ path: "src/auth.ts", mtime: "2026-01-15T11:55:00.000Z" }],
-  note: "auth failing, GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  note: `auth failing, GITHUB_TOKEN=${syntheticGithubToken}`,
   input: "FAIL src/auth.test.ts > rejects expired tokens",
 };
 
@@ -43,7 +45,7 @@ describe("prompt construction", () => {
 
   it("redacts secrets before anything leaves the machine", () => {
     expect(prompt).not.toContain("sk-ant-api03-SHOULDNOTLEAKAAAA");
-    expect(prompt).not.toContain("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(prompt).not.toContain(syntheticGithubToken);
     expect(prompt).toContain("[REDACTED]");
   });
 

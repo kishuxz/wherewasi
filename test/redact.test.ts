@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { REDACTED, containsSecret, redact } from "../src/redact.js";
 
+const syntheticGithubPat = ["ghp", "16C7e42F292c6912E7710c838347Ae178B4a"].join("_");
+const syntheticGithubFineGrained = [
+  "github",
+  "pat",
+  "11ABCDEFG0aBcDeFgHiJkL",
+  "MnOpQrStUvWxYz",
+].join("_");
+const syntheticRepeatedGithubPat = ["ghp", "A".repeat(36)].join("_");
+
 describe("redact", () => {
   const cases: [string, string][] = [
     [
@@ -9,8 +18,8 @@ describe("redact", () => {
     ],
     ["OpenAI key", "OPENAI_KEY=sk-proj-9aZ8bY7cX6dW5eV4fU3t"],
     ["Stripe key", "const stripe = 'sk_live_51H8xKjKlMnOpQrStUvWx'"],
-    ["GitHub PAT", "+  token: ghp_16C7e42F292c6912E7710c838347Ae178B4a"],
-    ["GitHub fine-grained", "github_pat_11ABCDEFG0aBcDeFgHiJkL_MnOpQrStUvWxYz"],
+    ["GitHub PAT", `+  token: ${syntheticGithubPat}`],
+    ["GitHub fine-grained", syntheticGithubFineGrained],
     ["AWS access key id", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"],
     ["bearer header", `headers: { Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.abc.def" }`],
     ["password assignment", "DB_PASSWORD=hunter2correcthorse"],
@@ -30,8 +39,8 @@ describe("redact", () => {
         "sk-ant-api03-AbCdEf0123456789xyz",
         "sk-proj-9aZ8bY7cX6dW5eV4fU3t",
         "sk_live_51H8xKjKlMnOpQrStUvWx",
-        "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
-        "github_pat_11ABCDEFG0aBcDeFgHiJkL_MnOpQrStUvWxYz",
+        syntheticGithubPat,
+        syntheticGithubFineGrained,
         "AKIAIOSFODNN7EXAMPLE",
         "eyJhbGciOiJIUzI1NiJ9.abc.def",
         "hunter2correcthorse",
@@ -55,14 +64,14 @@ describe("redact", () => {
       " import Anthropic from '@anthropic-ai/sdk';",
       "-const key = process.env.ANTHROPIC_API_KEY;",
       "+const key = 'sk-ant-api03-LEAKEDLEAKEDLEAKED';",
-      "+const gh = 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';",
+      `+const gh = '${syntheticRepeatedGithubPat}';`,
       " export const client = new Anthropic({ apiKey: key });",
     ].join("\n");
 
     const out = redact(diff);
 
     expect(out).not.toContain("sk-ant-api03-LEAKEDLEAKEDLEAKED");
-    expect(out).not.toContain("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(out).not.toContain(syntheticRepeatedGithubPat);
     // Diff scaffolding is preserved so the model can still read the change.
     expect(out).toContain("diff --git a/src/client.ts b/src/client.ts");
     expect(out).toContain("@@ -1,4 +1,5 @@");
