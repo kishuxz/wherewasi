@@ -103,7 +103,7 @@ The first time a transcript is actually ingested, `pause` says so once, rather t
 
 And the strongest form: point `WHEREWASI_BASE_URL` at a local model and your conversation never leaves the machine at all — see [zero network calls](#or-make-it-zero-network-calls).
 
-Claude Code only for now. No Cursor, no others.
+Claude Code transcript ingestion only for now. No Cursor transcript ingestion yet.
 
 ---
 
@@ -113,7 +113,7 @@ Your checkpoints are stored locally. When you configure a hosted model, the sele
 
 - **Checkpoint files stay on your machine**, under `~/.wherewasi/`. The tool does not sync or back them up. Configuring a hosted model sends selected evidence for analysis, as described above.
 - **Checkpoint storage stays outside your repo**, in your home directory. `install-hook` writes an opt-in Git hook under the repo's Git directory.
-- **No server, no daemon, no telemetry, no account.** The binary runs and exits. Nothing is resident. If you opt into [automatic capture](#capturing-without-remembering-to), a `pause` is spawned detached by your git hook or shell and exits the same way — still no daemon, still nothing running between captures.
+- **No account, telemetry, or remote service.** Normal CLI commands run and exit. If you opt into the local MCP integration, your agent host keeps its stdio child process running while connected.
 - **Only analysis uses the configured inference endpoint.** `resume`, `list`, and `handoff` do not call it. A provider may retry a failed request.
 - **Best-effort redaction** catches common key shapes and assignments before analysis and storage. It cannot guarantee removal of every credential or sensitive code. Review what you capture before using a hosted endpoint. ([Tests](https://github.com/kishuxz/wherewasi/blob/main/test/redact.test.ts).)
 - **No key? It still works.** `pause` captures and stores everything; `resume` prints the raw state.
@@ -253,6 +253,20 @@ wherewasi pause --tag token-refresh --actor codex "fixed the stale import; next 
 
 The checkpoint is task state, not an agent transcript. The receiving agent should verify it against the current tree and update the same tag before handing work back. No agent integration is installed automatically; both agents can invoke the CLI explicitly.
 Model-generated working-set paths must be present in the captured evidence. If a model invents a file, analysis is rejected and the raw checkpoint remains available.
+
+### `wherewasi mcp [--repo <path>]`
+
+Opt-in local MCP access lets Claude Code and Codex call `list_tasks` and `get_handoff` on the same stored checkpoints. The tools are read-only and make no inference request. `get_handoff` includes the saved Git state and a fresh verification status; agents still need to inspect the current files. Omit the task tag to read the latest checkpoint. The tools accept an optional absolute `repository` path, and `--repo` sets their default when the host launches the server outside the project.
+
+Build this checkout first, then add its absolute CLI path to each host from the repository you want to use:
+
+```sh
+pnpm build
+claude mcp add --scope local wherewasi -- node /absolute/path/to/wherewasi/dist/cli.js mcp --repo "$(pwd)"
+codex mcp add wherewasi -- node /absolute/path/to/wherewasi/dist/cli.js mcp --repo "$(pwd)"
+```
+
+Check the setup with `claude mcp get wherewasi` or `codex mcp list`; remove it with `claude mcp remove wherewasi` or `codex mcp remove wherewasi`. These commands change the agent host's MCP configuration only when you run them. To update a checkpoint, an agent can explicitly run `wherewasi pause --tag <task> --actor claude-code|codex "what changed and what is next"`; the MCP tools do not write.
 
 ### `wherewasi switch <branch> [note] [--tag <task>] [--create]`
 

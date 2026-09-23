@@ -3,6 +3,47 @@ import { captureGit, findRepoId, findRepoRoot } from "./capture.js";
 import { listRepos } from "./storage.js";
 import type { Analysis, GitState, Session } from "./types.js";
 
+async function sessionsForRepository(cwd: string, home?: string): Promise<Session[]> {
+  const repoPath = (await findRepoRoot(cwd)) ?? path.resolve(cwd);
+  const repoId = await findRepoId(repoPath);
+  const repos = await listRepos({ home, all: true });
+  return repos
+    .flatMap((repo) => repo.sessions)
+    .filter((candidate) =>
+      repoId && candidate.repoId ? candidate.repoId === repoId : candidate.repoPath === repoPath,
+    )
+    .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+}
+
+export interface HandoffTask {
+  task: string | null;
+  savedAt: string;
+  actor: Session["actor"] | "unknown";
+  note: string | null;
+}
+
+/** One latest checkpoint per task, including the latest untagged checkpoint. */
+export async function listHandoffTasks(
+  cwd: string,
+  opts: { home?: string } = {},
+): Promise<HandoffTask[]> {
+  const sessions = await sessionsForRepository(cwd, opts.home);
+  const seen = new Set<string | null>();
+  const tasks: HandoffTask[] = [];
+  for (const session of sessions) {
+    const task = session.tag ?? null;
+    if (seen.has(task)) continue;
+    seen.add(task);
+    tasks.push({
+      task,
+      savedAt: session.savedAt,
+      actor: session.actor ?? "unknown",
+      note: session.note,
+    });
+  }
+  return tasks;
+}
+
 export interface Handoff {
   schemaVersion: 1;
   task: string | null;
@@ -55,17 +96,9 @@ export async function loadHandoff(
   opts: { home?: string } = {},
 ): Promise<Handoff | null> {
   const repoPath = (await findRepoRoot(cwd)) ?? path.resolve(cwd);
-  const repoId = await findRepoId(repoPath);
-  const repos = await listRepos({ home: opts.home, all: true });
-  const session = repos
-    .flatMap((repo) => repo.sessions)
-    .filter((candidate) => {
-      if (tag !== undefined && candidate.tag !== tag) return false;
-      return repoId && candidate.repoId
-        ? candidate.repoId === repoId
-        : candidate.repoPath === repoPath;
-    })
-    .sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0];
+  const session = (await sessionsForRepository(cwd, opts.home)).find(
+    (candidate) => tag === undefined || candidate.tag === tag,
+  );
   if (!session) return null;
 
   const current = await captureGit(repoPath);
