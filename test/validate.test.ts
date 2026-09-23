@@ -64,6 +64,12 @@ describe("validateAnalysis", () => {
     expect(validateAnalysis({ ...good, working_set: [] })).toBeNull();
   });
 
+  it("rejects a plausible but useless bare file list from a weak model", () => {
+    expect(
+      validateAnalysis({ ...good, working_set: ["src/auth.ts", "src/auth.test.ts"] }),
+    ).toContain("without saying why it matters");
+  });
+
   for (const field of ["summary", "hypothesis", "next_step"] as const) {
     it(`rejects an empty ${field}`, () => {
       expect(validateAnalysis({ ...good, [field]: "" })).toContain(field);
@@ -99,9 +105,9 @@ describe("validateAnalysis", () => {
     // These are real and must not be collateral damage.
     for (const ok of [
       "Makefile — the build entrypoint",
-      "Dockerfile",
+      "Dockerfile — configures the failing build stage",
       "packages/core/src/index.ts — exports evaluateRun",
-      "src/my-module/index.ts",
+      "src/my-module/index.ts — contains the code under investigation",
       ".github/workflows/ci.yml — the failing job",
       "a/b/file with space.ts — still a real path",
     ]) {
@@ -228,5 +234,12 @@ describe("degradation", () => {
     const result = await analyze(state, { provider: providerReturning(invented) });
     expect(result.analysis).toBeNull();
     expect(result.error).toContain("src/fictional.ts");
+  });
+
+  it("does not accept a weak model's bare file list as analysis", async () => {
+    const weak = { ...good, working_set: ["packages/collector/src/index.ts"] };
+    const result = await analyze(state, { provider: providerReturning(weak) });
+    expect(result.analysis).toBeNull();
+    expect(result.error).toContain("without saying why it matters");
   });
 });

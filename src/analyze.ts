@@ -210,7 +210,7 @@ export function validateAnalysis(analysis: Analysis): string | null {
       return "working_set contained a JSON fragment — the model serialised part of its own response into an entry";
     }
 
-    const { path } = splitWorkingSetEntry(entry);
+    const { path, reason } = splitWorkingSetEntry(entry);
     if (!path) return "working_set contained an entry with no file path";
     if (path.length > MAX_PATH_CHARS) {
       return `working_set contained a ${path.length}-character path, which is prose rather than a file`;
@@ -226,6 +226,9 @@ export function validateAnalysis(analysis: Analysis): string | null {
     // extension; a sentence is none of those.
     if (/\s/.test(path) && !path.includes("/") && !/\.\w{1,6}$/.test(path)) {
       return `working_set contained prose where a path belongs (${path.slice(0, 40)}…)`;
+    }
+    if (!reason) {
+      return `working_set listed ${path} without saying why it matters — the model returned a file list, not a working set`;
     }
   }
 

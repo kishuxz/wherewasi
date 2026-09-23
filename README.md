@@ -457,7 +457,9 @@ A big diff plus piped test output can exceed a hosted free tier's per-request to
 
 ### Below roughly 70B parameters, output degrades
 
-Same prompt, same repo, an 8B model returned bare filenames with no reasons and a vague next step, plus a hypothesis that was confidently wrong. Structurally valid, substantively useless — and nothing fails, so a bad session looks exactly like a good one. Use a larger model where you can. ([#26](https://github.com/kishuxz/wherewasi/issues/26))
+Same prompt, same repo, an 8B model returned bare filenames with no reasons and a vague next step, plus a hypothesis that was confidently wrong. The original response was structurally valid but substantively useless. Use a larger model where you can. ([#26](https://github.com/kishuxz/wherewasi/issues/26))
+
+Bare filenames in a new model response are now rejected, and the raw checkpoint is still saved. This catches that specific failure; a plausible but wrong hypothesis or next step still needs human review.
 
 ---
 
