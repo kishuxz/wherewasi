@@ -125,6 +125,18 @@ describe("capture layer", () => {
     }
   });
 
+  it("keeps an old untracked file because Git still reports it as changed", async () => {
+    const repo2 = await FixtureRepo.create("wherewasi-old-untracked-");
+    try {
+      await repo2.write("unfinished.txt", "work", minutesAgo(400));
+      const state = await captureState({ cwd: repo2.dir, now });
+      expect(state.git.status).toContain("unfinished.txt");
+      expect(state.recentFiles.find((f) => f.path === "unfinished.txt")?.inGit).toBe(true);
+    } finally {
+      await repo2.cleanup();
+    }
+  });
+
   it("respects an explicit since instant", async () => {
     const repo3 = await FixtureRepo.create("wherewasi-since-");
     try {

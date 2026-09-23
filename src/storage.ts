@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CapturedState, Session } from "./types.js";
 
@@ -27,7 +27,7 @@ export function fileNameFor(savedAt: string): string {
 
 export async function saveSession(
   state: CapturedState,
-  extra: Pick<Session, "analysis" | "analysisError" | "trigger" | "tag">,
+  extra: Pick<Session, "analysis" | "analysisError" | "trigger" | "tag" | "actor">,
   opts: { home?: string; now?: Date } = {},
 ): Promise<{ session: Session; file: string }> {
   const home = opts.home ?? homedir();
@@ -35,9 +35,35 @@ export async function saveSession(
   const session: Session = { version: 1, savedAt, ...state, ...extra };
 
   const dir = sessionsDir(state.repoPath, home);
-  await mkdir(dir, { recursive: true });
-  const file = path.join(dir, fileNameFor(savedAt));
-  await writeFile(file, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+  const root = rootDir(home);
+  const sessions = path.join(root, "sessions");
+  for (const directory of [root, sessions, dir]) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+  }
+
+  // Publish a complete, private file atomically. A second capture in the same
+  // millisecond receives a suffix instead of replacing the first checkpoint.
+  const temporary = path.join(dir, `.tmp-${randomUUID()}`);
+  await writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  let file = path.join(dir, fileNameFor(savedAt));
+  try {
+    for (;;) {
+      try {
+        await link(temporary, file);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        file = path.join(dir, `${savedAt.replace(/:/g, "-")}-${randomUUID()}.json`);
+      }
+    }
+  } finally {
+    await unlink(temporary);
+  }
 
   return { session, file };
 }

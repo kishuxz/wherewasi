@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { CapturedState, GitState, RecencyWindow, RecentFile } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -19,7 +20,7 @@ export const BURST_WINDOW_MS = 120_000;
 /** Keeps a pathological monorepo walk from eating the 5s budget. */
 const MAX_ENTRIES_SCANNED = 40_000;
 
-async function git(args: string[], cwd: string): Promise<string> {
+async function gitResult(args: string[], cwd: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
@@ -38,9 +39,13 @@ async function git(args: string[], cwd: string): Promise<string> {
     });
     return stdout.trimEnd();
   } catch {
-    // Not a repo, no commits yet, git missing — all degrade to "no data".
-    return "";
+    // A failed Git read must not be mistaken for an empty working tree.
+    return null;
   }
+}
+
+async function git(args: string[], cwd: string): Promise<string> {
+  return (await gitResult(args, cwd)) ?? "";
 }
 
 export function truncate(text: string, limit = DIFF_LIMIT): { text: string; truncated: boolean } {
@@ -65,26 +70,42 @@ export async function findGitDir(cwd: string): Promise<string | null> {
   return dir ? path.resolve(dir) : null;
 }
 
+/** Linked worktrees share this directory even though their working paths differ. */
+export async function findRepoId(cwd: string): Promise<string | null> {
+  const common = await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
+  return common ? createHash("sha256").update(path.resolve(cwd, common)).digest("hex") : null;
+}
+
 export async function captureGit(root: string): Promise<GitState> {
   // Concurrent — this is the bulk of pause's latency budget.
-  const [branch, rawDiff, rawStaged, log, status] = await Promise.all([
+  const [branch, rawDiff, rawStaged, log, status, head] = await Promise.all([
     git(["rev-parse", "--abbrev-ref", "HEAD"], root),
-    git(["diff"], root),
-    git(["diff", "--staged"], root),
+    gitResult(["diff"], root),
+    gitResult(["diff", "--staged"], root),
     git(["log", "--oneline", "-10"], root),
-    git(["status", "--short"], root),
+    gitResult(["status", "--short", "--untracked-files=all"], root),
+    gitResult(["rev-parse", "HEAD"], root),
   ]);
 
-  const diff = truncate(rawDiff);
-  const stagedDiff = truncate(rawStaged);
+  const diff = truncate(rawDiff ?? "");
+  const stagedDiff = truncate(rawStaged ?? "");
+  const complete = rawDiff !== null && rawStaged !== null && status !== null && head !== null;
 
   return {
     isRepo: true,
     branch: branch || "(detached)",
+    head: head ?? "",
+    ...(complete
+      ? {
+          fingerprint: createHash("sha256")
+            .update(JSON.stringify([head, status, rawDiff, rawStaged]))
+            .digest("hex"),
+        }
+      : {}),
     diff: diff.text,
     stagedDiff: stagedDiff.text,
     log,
-    status,
+    status: status ?? "",
     diffTruncated: diff.truncated,
     stagedDiffTruncated: stagedDiff.truncated,
   };
@@ -218,7 +239,10 @@ export async function findRecentFiles(
 
       try {
         const s = await stat(full);
-        if (s.mtimeMs >= cutoff && s.mtimeMs <= now) {
+        const rel = path.relative(root, full).split(path.sep).join("/");
+        // Git changes are independent of mtime. An untracked file left open
+        // overnight still belongs to the working set on a first pause.
+        if (gitPaths.has(rel) || (s.mtimeMs >= cutoff && s.mtimeMs <= now)) {
           found.push({ path: full, mtimeMs: s.mtimeMs });
         }
       } catch {
@@ -277,12 +301,14 @@ export async function captureState(opts: CaptureOptions): Promise<CapturedState>
 
   // git first: its paths decide the sort order of the mtime scan.
   const git = root ? await captureGit(root) : emptyGitState();
+  const repoId = root ? await findRepoId(root) : null;
   const gitPaths = pathsFromStatus(git.status);
 
   const recentFiles = await findRecentFiles(base, { now, since, gitPaths });
 
   return {
     repoPath: base,
+    ...(repoId ? { repoId } : {}),
     git,
     recentFiles,
     window: {

@@ -2,6 +2,9 @@ export interface GitState {
   /** false when the command was run outside a git work tree */
   isRepo: boolean;
   branch: string;
+  /** Commit and complete tracked-change fingerprint at capture time. */
+  head?: string;
+  fingerprint?: string;
   /** `git diff` output, truncated to DIFF_LIMIT chars */
   diff: string;
   /** `git diff --staged` output, truncated to DIFF_LIMIT chars */
@@ -47,6 +50,8 @@ export interface TranscriptRef {
 export interface CapturedState {
   /** absolute path used as the storage identity for this repo */
   repoPath: string;
+  /** Git common directory identity, shared by linked worktrees. */
+  repoId?: string;
   git: GitState;
   recentFiles: RecentFile[];
   /** absent on sessions written before the window became configurable */
@@ -88,4 +93,6 @@ export interface Session extends CapturedState {
    * same repo. Absent on untagged pauses.
    */
   tag?: string;
+  /** Set by an explicit caller; never inferred from the running terminal. */
+  actor?: "human" | "claude-code" | "codex";
 }

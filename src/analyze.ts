@@ -13,7 +13,7 @@ const MAX_TOKENS = 2500;
 
 const SYSTEM = `You are writing a note to a developer who was interrupted an hour ago and has just sat back down. They can already see their diff. Supply the one thing it cannot: the problem they were solving.
 
-If an <agent_session> is present it OUTRANKS every other section. It is the developer stating their intent in their own words; the diff is only the residue those intentions left. Where the two disagree, the session is right and the diff is stale. Never contradict an explicitly stated goal because the edits look like something else.
+If a <developer_note> is present, it is the current checkpoint's stated goal and outranks older conversation. An <agent_session> can add reasoning and history, but may come from earlier work. Both outrank a diff when naming intent. Never contradict an explicitly stated goal because the edits look like something else.
 
 THE DIFF IS EVIDENCE, NOT THE SUBJECT. Edits are footprints; describe where the person was walking, not the shape of the prints. If a sentence would still be true having read only the diff and understood nothing of the problem, delete it.
 
