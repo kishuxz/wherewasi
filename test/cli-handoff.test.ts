@@ -52,4 +52,36 @@ describe("installed-style CLI handoff", () => {
     const { stdout } = await run(["handoff", "explicit", "--json"]);
     expect(JSON.parse(stdout).source).toBe("claude-code-session");
   });
+
+  it("saves the departing branch before switching", async () => {
+    const repo = await FixtureRepo.create();
+    cleanups.push(() => repo.cleanup());
+    await repo.write("app.ts", "export const app = 'main';\n");
+    await repo.commit("base");
+    await repo.git("branch", "feature");
+    const home = await tempHome();
+    cleanups.push(home.cleanup);
+    const env = {
+      ...process.env,
+      HOME: home.dir,
+      WHEREWASI_API_KEY: "",
+      GROQ_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      WHEREWASI_WITH_SESSION: "",
+    };
+    await execFileAsync(
+      CLI,
+      [SOURCE, "switch", "feature", "--tag", "departure", "investigating auth"],
+      {
+        cwd: repo.dir,
+        env,
+      },
+    );
+    expect((await repo.git("branch", "--show-current")).stdout.trim()).toBe("feature");
+    const session = (await listSessions(repo.dir, { home: home.dir })).find(
+      (s) => s.tag === "departure",
+    );
+    expect(session?.git.branch).toBe("main");
+    expect(session?.note).toBe("investigating auth");
+  });
 });
