@@ -232,6 +232,32 @@ export function validateAnalysis(analysis: Analysis): string | null {
   return null;
 }
 
+/** A model may name a plausible file that was never in the captured evidence. */
+export function validateEvidencePaths(
+  analysis: Analysis,
+  state: CapturedState,
+  transcript?: Transcript | null,
+): string | null {
+  const listed = new Set(state.recentFiles.map((file) => file.path));
+  const evidence = [
+    state.git.diff,
+    state.git.stagedDiff,
+    state.git.status,
+    state.input ?? "",
+    state.note ?? "",
+    ...(transcript?.content.map((turn) => turn.text) ?? []),
+  ].join("\n");
+  for (const entry of analysis.working_set) {
+    const { path } = splitWorkingSetEntry(entry);
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const exactPath = new RegExp(`(^|[^A-Za-z0-9_./-])${escaped}(?=$|[^A-Za-z0-9_./-])`, "m");
+    if (!listed.has(path) && !exactPath.test(evidence)) {
+      return `working_set named ${path}, which was not present in the captured evidence`;
+    }
+  }
+  return null;
+}
+
 /**
  * Small models reproduce the prompt's worked examples verbatim instead of
  * reasoning, and the result is fluent, well-formed and about the wrong
@@ -289,6 +315,14 @@ export async function analyze(
       return {
         analysis: null,
         error: `${result.model} returned an unusable analysis — ${invalid}`,
+        model: result.model,
+      };
+    }
+    const unsupported = validateEvidencePaths(analysis, state, opts.transcript);
+    if (unsupported) {
+      return {
+        analysis: null,
+        error: `${result.model} returned an unusable analysis — ${unsupported}`,
         model: result.model,
       };
     }

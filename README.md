@@ -252,6 +252,7 @@ wherewasi pause --tag token-refresh --actor codex "fixed the stale import; next 
 ```
 
 The checkpoint is task state, not an agent transcript. The receiving agent should verify it against the current tree and update the same tag before handing work back. No agent integration is installed automatically; both agents can invoke the CLI explicitly.
+Model-generated working-set paths must be present in the captured evidence. If a model invents a file, analysis is rejected and the raw checkpoint remains available.
 
 ### `wherewasi switch <branch> [note] [--tag <task>] [--create]`
 
