@@ -123,8 +123,19 @@ export function describeWindow(session: Session): string {
  * third, so the incompleteness has to be stated rather than implied.
  */
 export function truncationNotice(session: Session): string | null {
-  const { diffTruncated, stagedDiffTruncated } = session.git;
+  const { diffTruncated, stagedDiffTruncated, diffOmittedFiles, stagedDiffOmittedFiles } =
+    session.git;
   if (!diffTruncated && !stagedDiffTruncated) return null;
+
+  if (diffOmittedFiles !== undefined || stagedDiffOmittedFiles !== undefined) {
+    const affected = [
+      ...(diffTruncated ? [`unstaged (${diffOmittedFiles ?? "unknown"} files omitted)`] : []),
+      ...(stagedDiffTruncated
+        ? [`staged (${stagedDiffOmittedFiles ?? "unknown"} files omitted)`]
+        : []),
+    ];
+    return `⚠ Diff evidence was sampled across files at ${DIFF_LIMIT} chars: ${affected.join(", ")}. Shown file sections may also be partial; inspect current files before relying on the working set.`;
+  }
 
   const which =
     diffTruncated && stagedDiffTruncated

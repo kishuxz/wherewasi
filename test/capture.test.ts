@@ -8,6 +8,7 @@ import {
   markBursts,
   parseSince,
   pathsFromStatus,
+  sampleDiff,
   truncate,
 } from "../src/capture.js";
 import { FixtureRepo } from "./helpers/fixture-repo.js";
@@ -163,14 +164,44 @@ describe("capture layer", () => {
     expect(long.text.slice(0, DIFF_LIMIT)).toBe("x".repeat(DIFF_LIMIT));
   });
 
+  it("samples the first and last changed file instead of losing later evidence", () => {
+    const first = `diff --git a/first.ts b/first.ts\n@@ -1 +1 @@\n+${"x".repeat(9000)}\n`;
+    const last = "diff --git a/last.ts b/last.ts\n@@ -1 +1 @@\n+the blocker is here\n";
+    const sample = sampleDiff(first + last);
+    expect(sample.truncated).toBe(true);
+    expect(sample.omittedFiles).toBe(0);
+    expect(sample.text).toContain("a/first.ts b/first.ts");
+    expect(sample.text).toContain("a/last.ts b/last.ts");
+    expect(sample.text).toContain("the blocker is here");
+    expect(sample.text.length).toBeGreaterThan(7000);
+    expect(sample.text.length).toBeLessThanOrEqual(DIFF_LIMIT);
+  });
+
+  it("reports file sections omitted when there are more than the budget can represent", () => {
+    const diff = Array.from(
+      { length: 40 },
+      (_, index) => `diff --git a/f${index}.ts b/f${index}.ts\n@@ -1 +1 @@\n+${"x".repeat(500)}\n`,
+    ).join("");
+    const sample = sampleDiff(diff);
+    expect(sample.omittedFiles).toBeGreaterThan(0);
+    expect(sample.text).toContain("a/f0.ts b/f0.ts");
+    expect(sample.text).toContain("a/f39.ts b/f39.ts");
+    expect(sample.text).toContain(`${sample.omittedFiles} files omitted`);
+    expect(sample.text.length).toBeLessThanOrEqual(DIFF_LIMIT);
+  });
+
   it("truncates a real oversized diff", async () => {
     const big = await FixtureRepo.create("wherewasi-big-");
     try {
       await big.write("big.txt", "seed\n");
+      await big.write("later.txt", "seed\n");
       await big.commit("seed");
       await big.write("big.txt", Array.from({ length: 2000 }, (_, i) => `line ${i}`).join("\n"));
+      await big.write("later.txt", "the later blocker\n");
       const state = await captureState({ cwd: big.dir, now });
       expect(state.git.diffTruncated).toBe(true);
+      expect(state.git.diffOmittedFiles).toBe(0);
+      expect(state.git.diff).toContain("later.txt");
       expect(state.git.diff.length).toBeLessThan(DIFF_LIMIT + 100);
     } finally {
       await big.cleanup();

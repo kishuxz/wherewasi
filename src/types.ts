@@ -15,6 +15,9 @@ export interface GitState {
   status: string;
   diffTruncated: boolean;
   stagedDiffTruncated: boolean;
+  /** Added with balanced diff sampling; older sessions do not carry these. */
+  diffOmittedFiles?: number;
+  stagedDiffOmittedFiles?: number;
 }
 
 export interface RecentFile {

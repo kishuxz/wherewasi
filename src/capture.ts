@@ -56,6 +56,65 @@ export function truncate(text: string, limit = DIFF_LIMIT): { text: string; trun
   };
 }
 
+export interface DiffSample {
+  text: string;
+  truncated: boolean;
+  /** Number of changed-file sections excluded entirely from the sample. */
+  omittedFiles: number;
+  /** Total changed-file sections in the original diff. */
+  totalFiles: number;
+}
+
+/** Spread a bounded diff across files rather than losing every later file. */
+export function sampleDiff(text: string, limit = DIFF_LIMIT): DiffSample {
+  const starts = [...text.matchAll(/^diff --git /gm)].map((match) => match.index);
+  const totalFiles = starts.length;
+  if (text.length <= limit) return { text, truncated: false, omittedFiles: 0, totalFiles };
+  if (!totalFiles || starts[0] !== 0 || limit < 500) {
+    return { ...truncate(text, limit), omittedFiles: 0, totalFiles };
+  }
+
+  const sections = starts.map((start, index) =>
+    text.slice(start, starts[index + 1] ?? text.length),
+  );
+  // At least ~400 characters per chosen file preserves a header and some hunk
+  // content. Equally spaced indexes include both ends of a long diff.
+  const count = Math.min(sections.length, Math.max(1, Math.floor((limit - 200) / 400)));
+  const indexes = Array.from({ length: count }, (_, index) =>
+    count === 1 ? 0 : Math.round((index * (sections.length - 1)) / (count - 1)),
+  );
+  const budgets = Array<number>(count).fill(0);
+  const unsettled = new Set(indexes.map((_, index) => index));
+  let available = limit - 200 - count * 2;
+  while (unsettled.size) {
+    const equalShare = Math.floor(available / unsettled.size);
+    const short = [...unsettled].filter((index) => sections[indexes[index]!]!.length <= equalShare);
+    if (!short.length) {
+      for (const index of unsettled) budgets[index] = equalShare;
+      break;
+    }
+    for (const index of short) {
+      const length = sections[indexes[index]!]!.length;
+      budgets[index] = length;
+      available -= length;
+      unsettled.delete(index);
+    }
+  }
+  const marker = "\n… [middle of this file omitted]\n";
+  const sampleSection = (section: string, budget: number): string => {
+    if (section.length <= budget) return section.trimEnd();
+    const contentBudget = budget - marker.length;
+    const front = Math.floor(contentBudget * 0.7);
+    return `${section.slice(0, front)}${marker}${section.slice(-contentBudget + front)}`.trimEnd();
+  };
+  const sampled = indexes
+    .map((index, sampleIndex) => sampleSection(sections[index]!, budgets[sampleIndex]!))
+    .join("\n\n");
+  const omittedFiles = sections.length - count;
+  const footer = `\n… [sampled ${count} of ${sections.length} changed files at ${limit} chars; ${omittedFiles} files omitted and long sections shortened]`;
+  return { text: `${sampled}${footer}`, truncated: true, omittedFiles, totalFiles };
+}
+
 export async function findRepoRoot(cwd: string): Promise<string | null> {
   const root = await git(["rev-parse", "--show-toplevel"], cwd);
   return root ? path.resolve(root) : null;
@@ -102,8 +161,8 @@ export async function captureGit(root: string): Promise<GitState> {
     gitResult(["rev-parse", "HEAD"], root),
   ]);
 
-  const diff = truncate(rawDiff ?? "");
-  const stagedDiff = truncate(rawStaged ?? "");
+  const diff = sampleDiff(rawDiff ?? "");
+  const stagedDiff = sampleDiff(rawStaged ?? "");
   const complete = rawDiff !== null && rawStaged !== null && status !== null && head !== null;
 
   return {
@@ -123,6 +182,8 @@ export async function captureGit(root: string): Promise<GitState> {
     status: status ?? "",
     diffTruncated: diff.truncated,
     stagedDiffTruncated: stagedDiff.truncated,
+    diffOmittedFiles: diff.omittedFiles,
+    stagedDiffOmittedFiles: stagedDiff.omittedFiles,
   };
 }
 

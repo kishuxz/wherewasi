@@ -269,6 +269,16 @@ describe("truncationNotice", () => {
     expect(truncationNotice(cut(true, false))).toContain("8000 chars");
   });
 
+  it("reports balanced-sample omissions for a new checkpoint", () => {
+    const session = {
+      ...cut(true, false),
+      git: { ...cut(true, false).git, diffOmittedFiles: 3, stagedDiffOmittedFiles: 0 },
+    };
+    const notice = truncationNotice(session);
+    expect(notice).toContain("unstaged (3 files omitted)");
+    expect(notice).toContain("Shown file sections may also be partial");
+  });
+
   it("warns that the working set may be incomplete", () => {
     const out = formatResume(cut(true, false), opts);
     expect(out).toContain("this working set may be incomplete");

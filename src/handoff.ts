@@ -65,6 +65,8 @@ export interface Handoff {
   capturedOutputTail: string | null;
   changedFiles: string[];
   diffTruncated: boolean;
+  /** Absent for checkpoints created before balanced diff sampling. */
+  omittedDiffFiles?: number;
 }
 
 function verify(saved: GitState, current: GitState, samePath: boolean): Handoff["verification"] {
@@ -124,6 +126,13 @@ export async function loadHandoff(
     capturedOutputTail: output ? output.slice(-2000) : null,
     changedFiles: session.recentFiles.filter((f) => f.inGit).map((f) => f.path),
     diffTruncated: session.git.diffTruncated || session.git.stagedDiffTruncated,
+    ...(session.git.diffOmittedFiles !== undefined ||
+    session.git.stagedDiffOmittedFiles !== undefined
+      ? {
+          omittedDiffFiles:
+            (session.git.diffOmittedFiles ?? 0) + (session.git.stagedDiffOmittedFiles ?? 0),
+        }
+      : {}),
   };
 }
 
@@ -140,7 +149,11 @@ export function formatHandoff(handoff: Handoff): string {
   ];
   for (const reason of handoff.verification.reasons) out.push(`- ${reason}`);
   if (handoff.diffTruncated)
-    out.push("- The captured diff was truncated; inspect the current files.");
+    out.push(
+      handoff.omittedDiffFiles === undefined
+        ? "- The captured diff was truncated; inspect the current files."
+        : `- The captured diff was sampled; ${handoff.omittedDiffFiles} file sections were omitted and shown sections may be partial. Inspect the current files.`,
+    );
   if (handoff.developerNote) out.push("", "## Developer note", handoff.developerNote);
   if (handoff.analysis) {
     const a = handoff.analysis;
