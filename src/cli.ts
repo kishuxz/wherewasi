@@ -16,7 +16,6 @@ import {
 } from "./capture.js";
 import { analyze } from "./analyze.js";
 import { selectProvider } from "./providers/index.js";
-import { redact } from "./redact.js";
 import {
   auditCheckpointPermissions,
   hasAnySession,
@@ -38,11 +37,12 @@ import {
   splitWorkingSetEntry,
 } from "./format.js";
 import { formatStatus, toRow } from "./status.js";
-import { formatHandoff, loadHandoff } from "./handoff.js";
+import { appendTaskCheckpoint, formatHandoff, loadHandoff } from "./handoff.js";
 import {
   hasHostedConsent,
   hostedDestination,
   hostedPreview,
+  redactCapturedState,
   recordHostedConsent,
 } from "./privacy.js";
 import {
@@ -250,19 +250,7 @@ async function cmdPause(
   const captureMs = Date.now() - started;
 
   // Redact at rest as well as in flight: the session file is a durable artifact.
-  const stored = {
-    ...state,
-    git: {
-      ...state.git,
-      diff: redact(state.git.diff),
-      stagedDiff: redact(state.git.stagedDiff),
-      status: redact(state.git.status),
-      log: redact(state.git.log),
-    },
-    note: state.note ? redact(state.note) : null,
-    input: state.input ? redact(state.input) : null,
-    recentFiles: state.recentFiles.map((file) => ({ ...file, path: redact(file.path) })),
-  };
+  const stored = redactCapturedState(state);
 
   // Conversation access is opt-in and checked before anything is read.
   const sessionsAllowed =
@@ -341,13 +329,16 @@ async function cmdPause(
   const { analysis, error } = withheld
     ? { analysis: null, error: withheld }
     : await analyze(stateWithSession, { provider: selection.provider, transcript });
-  const { session, file } = await saveSession(stateWithSession, {
+  const checkpoint = {
     analysis,
     analysisError: error,
-    trigger: opts.auto ? "auto" : "manual",
+    trigger: (opts.auto ? "auto" : "manual") as Session["trigger"],
     ...(tag ? { tag } : {}),
     ...(actor ? { actor: actor as Session["actor"] } : {}),
-  });
+  };
+  const { session, file } = tag
+    ? await appendTaskCheckpoint(stateWithSession, checkpoint)
+    : await saveSession(stateWithSession, checkpoint);
 
   const totalMs = Date.now() - started;
   if (opts.auto) {

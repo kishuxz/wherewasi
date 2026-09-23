@@ -8,9 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- MCP `update_task` appends an explicit agent checkpoint using the `checkpointId` from `get_handoff`; stale updates fail, and simultaneous writes to the same task are serialized across linked worktrees.
 - First hosted analysis previews its exact prompt in an interactive terminal and requires endpoint-specific approval; headless and automatic captures save raw state until approved. `pause --local-only` and `WHEREWASI_LOCAL_ONLY=1` suppress hosted analysis.
 - `privacy [--fix-permissions]` audits and optionally tightens modes of existing checkpoint files and directories, skipping symlinks.
-- `mcp [--repo <path>]` serves read-only `list_tasks` and `get_handoff` tools over local stdio, so Claude Code and Codex can inspect the same tagged checkpoint.
+- `mcp [--repo <path>]` serves local task discovery, handoff reading, and guarded updates over stdio, so Claude Code and Codex can continue the same tagged checkpoint.
 - `switch <branch> [note] [--tag <task>] [--create]` saves the departing task before invoking `git switch`.
 - `handoff [tag] [--json]` exports a versioned task checkpoint for humans and coding agents. Tagged checkpoints can be read from linked worktrees, with Git revision and tracked-change verification.
 - `pause --actor human|claude-code|codex` records who explicitly saved a checkpoint.

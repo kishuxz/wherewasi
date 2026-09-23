@@ -260,7 +260,9 @@ Model-generated working-set paths must be present in the captured evidence. If a
 
 ### `wherewasi mcp [--repo <path>]`
 
-Opt-in local MCP access lets Claude Code and Codex call `list_tasks` and `get_handoff` on the same stored checkpoints. The tools are read-only and make no inference request. `get_handoff` includes the saved Git state and a fresh verification status; agents still need to inspect the current files. Omit the task tag to read the latest checkpoint. The tools accept an optional absolute `repository` path, and `--repo` sets their default when the host launches the server outside the project.
+Opt-in local MCP access lets Claude Code and Codex call `list_tasks`, `get_handoff`, and `update_task` on the same stored checkpoints. `get_handoff` includes the saved Git state, a fresh verification status, and a `checkpointId`; agents still need to inspect the current files. `update_task` requires that id, an existing tag, an actor, and a note. If someone else updated the task since it was read, the tool refuses the stale update and tells the agent to read again. Updates append a new private checkpoint without inference or transcript access.
+
+Omit the task tag from `get_handoff` to read the latest checkpoint. The tools accept an optional absolute `repository` path for linked worktrees of the configured repository; unrelated repositories are rejected. `--repo` sets the server's default when an agent host launches it outside the project.
 
 Build this checkout first, then add its absolute CLI path to each host from the repository you want to use:
 
@@ -270,7 +272,7 @@ claude mcp add --scope local wherewasi -- node /absolute/path/to/wherewasi/dist/
 codex mcp add wherewasi -- node /absolute/path/to/wherewasi/dist/cli.js mcp --repo "$(pwd)"
 ```
 
-Check the setup with `claude mcp get wherewasi` or `codex mcp list`; remove it with `claude mcp remove wherewasi` or `codex mcp remove wherewasi`. These commands change the agent host's MCP configuration only when you run them. To update a checkpoint, an agent can explicitly run `wherewasi pause --tag <task> --actor claude-code|codex "what changed and what is next"`; the MCP tools do not write.
+Check the setup with `claude mcp get wherewasi` or `codex mcp list`; remove it with `claude mcp remove wherewasi` or `codex mcp remove wherewasi`. These commands change the agent host's MCP configuration only when you run them. A human can still update a checkpoint with `wherewasi pause --tag <task> "what changed and what is next"` and read agent updates with `wherewasi handoff <task>`.
 
 ### `wherewasi switch <branch> [note] [--tag <task>] [--create]`
 

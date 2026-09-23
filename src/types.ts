@@ -81,6 +81,8 @@ export interface Analysis {
 
 export interface Session extends CapturedState {
   version: 1;
+  /** Stable revision token for guarded updates; absent in older checkpoints. */
+  checkpointId?: string;
   savedAt: string;
   analysis: Analysis | null;
   /** human-readable reason the analysis is missing */

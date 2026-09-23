@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
 import { captureState, findRepoId } from "../src/capture.js";
-import { formatHandoff, loadHandoff } from "../src/handoff.js";
-import { saveSession } from "../src/storage.js";
+import {
+  appendTaskCheckpoint,
+  CheckpointConflictError,
+  formatHandoff,
+  loadHandoff,
+} from "../src/handoff.js";
+import { listRepos, saveSession } from "../src/storage.js";
 import { FixtureRepo, tempHome } from "./helpers/fixture-repo.js";
 
 describe("portable task handoff", () => {
@@ -85,5 +90,53 @@ describe("portable task handoff", () => {
     expect((await loadHandoff(repo.dir, undefined, { home: home.dir }))?.verification.status).toBe(
       "unverified",
     );
+  });
+
+  it("preserves one winner when linked worktrees update the same revision concurrently", async () => {
+    const repo = await FixtureRepo.create();
+    cleanups.push(() => repo.cleanup());
+    await repo.write("app.ts", "export const app = true;\n");
+    await repo.commit("base");
+    const home = await tempHome();
+    cleanups.push(home.cleanup);
+    const worktree = path.join(home.dir, "other-worktree");
+    await repo.git("worktree", "add", "-b", "other-branch", worktree);
+
+    const initial = await saveSession(
+      await captureState({ cwd: repo.dir, note: "human intent" }),
+      { analysis: null, analysisError: "no model", trigger: "manual", tag: "auth", actor: "human" },
+      { home: home.dir },
+    );
+    const expectedCheckpointId = initial.session.checkpointId!;
+    const sameInstant = new Date(new Date(initial.session.savedAt).getTime() + 1000);
+    const states = await Promise.all([
+      captureState({ cwd: repo.dir, note: "Claude update" }),
+      captureState({ cwd: worktree, note: "Codex update" }),
+    ]);
+    const results = await Promise.allSettled(
+      states.map((state, index) =>
+        appendTaskCheckpoint(
+          state,
+          {
+            analysis: null,
+            analysisError: "agent update",
+            trigger: "manual",
+            tag: "auth",
+            actor: index === 0 ? "claude-code" : "codex",
+          },
+          { home: home.dir, expectedCheckpointId, now: sameInstant },
+        ),
+      ),
+    );
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const failed = results.find((result) => result.status === "rejected");
+    expect(failed?.status === "rejected" && failed.reason).toBeInstanceOf(CheckpointConflictError);
+    const sessions = (await listRepos({ home: home.dir, all: true })).flatMap(
+      (item) => item.sessions,
+    );
+    expect(sessions.filter((session) => session.tag === "auth")).toHaveLength(2);
+    const handoff = await loadHandoff(repo.dir, "auth", { home: home.dir });
+    expect(["claude-code", "codex"]).toContain(handoff?.actor);
+    expect(handoff?.checkpointId).not.toBe(expectedCheckpointId);
   });
 });
